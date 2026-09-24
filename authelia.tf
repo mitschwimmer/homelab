@@ -1,10 +1,24 @@
+locals {
+  authelia_configuration = templatefile("${path.module}/authelia/configuration.yml.tftpl", {
+    smtp_enabled        = var.authelia_smtp != null
+    smtp_address        = var.authelia_smtp == null ? "" : var.authelia_smtp.address
+    smtp_username       = var.authelia_smtp == null ? "" : var.authelia_smtp.username
+    smtp_sender         = var.authelia_smtp == null ? "" : var.authelia_smtp.sender
+    smtp_check_address  = var.authelia_smtp == null ? "" : var.authelia_smtp.startup_check_address
+  })
+}
+
+resource "terraform_data" "authelia_configuration" {
+  triggers_replace = sha256(local.authelia_configuration)
+}
+
 resource "incus_storage_volume" "authelia_config" {
   name   = "authelia-config"
   pool   = "local"
   remote = "IncusOS"
 
   file {
-    content     = file("${path.module}/authelia/configuration.yml")
+    content     = local.authelia_configuration
     target_path = "/configuration.yml"
     mode        = "0644"
   }
@@ -40,6 +54,15 @@ resource "incus_storage_volume" "authelia_secrets" {
     target_path = "/users.yml"
     mode        = "0600"
   }
+
+  dynamic "file" {
+    for_each = var.authelia_smtp == null ? [] : [1]
+    content {
+      source_path = "${var.authelia_secret_directory}/SMTP_PASSWORD"
+      target_path = "/SMTP_PASSWORD"
+      mode        = "0600"
+    }
+  }
 }
 
 resource "incus_storage_volume" "authelia_data" {
@@ -54,11 +77,19 @@ resource "incus_instance" "authelia" {
   remote   = "IncusOS"
   profiles = []
 
-  config = {
+  config = merge({
     "boot.autostart" = "true"
     "environment.AUTHELIA_SESSION_SECRET_FILE" = "/secrets/SESSION_SECRET"
     "environment.AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE" = "/secrets/STORAGE_ENCRYPTION_KEY"
     "environment.AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE" = "/secrets/RESET_PASSWORD_JWT_SECRET"
+  }, var.authelia_smtp == null ? {} : {
+    "environment.AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE" = "/secrets/SMTP_PASSWORD"
+  })
+
+  # A changed config file on its mounted volume requires a process restart.
+  # The SQLite database and secrets persist in separate volumes.
+  lifecycle {
+    replace_triggered_by = [terraform_data.authelia_configuration]
   }
 
   device {

@@ -32,5 +32,13 @@ storage:
     path: /data/db.sqlite3
 
 notifier:
+%{ if smtp_enabled ~}
+  smtp:
+    address: ${jsonencode(smtp_address)}
+    username: ${jsonencode(smtp_username)}
+    sender: ${jsonencode(smtp_sender)}
+    startup_check_address: ${jsonencode(smtp_check_address)}
+%{ else ~}
   filesystem:
     filename: /data/notification.txt
+%{ endif ~}
