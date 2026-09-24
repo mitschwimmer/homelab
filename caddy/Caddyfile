@@ -1,0 +1,4 @@
+mitschwimmer.de {
+    respond /health "ok" 200
+    respond "Caddy is running" 200
+}
