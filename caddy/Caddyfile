@@ -1,4 +1,23 @@
 mitschwimmer.de {
-    respond /health "ok" 200
-    respond "Caddy is running" 200
+    handle /private {
+        route {
+            forward_auth http://${authelia_ip}:9091 {
+                uri /api/authz/forward-auth
+                copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+            }
+            respond "authenticated" 200
+        }
+    }
+
+    handle /health {
+        respond "ok" 200
+    }
+
+    handle {
+        respond "Caddy is running" 200
+    }
+}
+
+auth.mitschwimmer.de {
+    reverse_proxy http://${authelia_ip}:9091
 }

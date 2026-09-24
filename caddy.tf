@@ -4,7 +4,9 @@ resource "incus_storage_volume" "caddy_etc" {
   remote = "IncusOS"
 
   file {
-    content     = file("${path.module}/caddy/Caddyfile")
+    content     = templatefile("${path.module}/caddy/Caddyfile", {
+      authelia_ip = var.authelia_bridge_ip
+    })
     target_path = "/Caddyfile"
     mode        = "0644"
   }
@@ -29,7 +31,24 @@ resource "incus_instance" "caddy" {
   profiles = []
 
   config = {
-    "boot.autostart" = "true"
+    "boot.autostart"        = "true"
+    "user.caddyfile_sha256" = sha256(templatefile("${path.module}/caddy/Caddyfile", {
+      authelia_ip = var.authelia_bridge_ip
+    }))
+  }
+
+  # A volume file update does not make the running Caddy process reload.
+  # Changing the environment entry makes the provider re-run this command.
+  exec = {
+    "reload-caddy" = {
+      command = ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
+      environment = {
+        CADDYFILE_SHA256 = sha256(templatefile("${path.module}/caddy/Caddyfile", {
+          authelia_ip = var.authelia_bridge_ip
+        }))
+      }
+      trigger = "on_change"
+    }
   }
 
   device {
