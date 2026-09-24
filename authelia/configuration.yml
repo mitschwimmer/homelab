@@ -1,0 +1,36 @@
+server:
+  address: tcp://0.0.0.0:9091/
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: ForwardAuth
+
+log:
+  level: info
+
+authentication_backend:
+  file:
+    path: /secrets/users.yml
+    watch: true
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: mitschwimmer.de
+      resources:
+        - '^/private$'
+      policy: two_factor
+
+session:
+  cookies:
+    - domain: mitschwimmer.de
+      authelia_url: https://auth.mitschwimmer.de
+      default_redirection_url: https://mitschwimmer.de
+
+storage:
+  local:
+    path: /data/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /data/notification.txt

@@ -19,3 +19,4 @@ secrets/
 *.p12
 *.pfx
 users.yml
+authelia-secret*/
