@@ -1,0 +1,21 @@
+# OpenTofu state and local provider installation
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Never place credentials or generated keys in this repository
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+users.yml
