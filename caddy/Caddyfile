@@ -1,4 +1,4 @@
-mitschwimmer.de {
+${base_domain} {
     handle /private {
         route {
             forward_auth http://${authelia_ip}:9091 {
@@ -18,6 +18,6 @@ mitschwimmer.de {
     }
 }
 
-auth.mitschwimmer.de {
+auth.${base_domain} {
     reverse_proxy http://${authelia_ip}:9091
 }
