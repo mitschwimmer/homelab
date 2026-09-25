@@ -20,6 +20,9 @@ access_control:
       resources:
         - '^/private$'
       policy: two_factor
+    - domain: grafana.${base_domain}
+      subject: 'group:admin'
+      policy: two_factor
 
 session:
   cookies:
@@ -30,6 +33,41 @@ session:
 storage:
   local:
     path: /data/db.sqlite3
+
+telemetry:
+  metrics:
+    enabled: true
+    address: tcp://0.0.0.0:9959/metrics
+
+identity_providers:
+  oidc:
+    jwks:
+      - key: {{ secret "/secrets/OIDC_JWKS" | mindent 10 "|" | msquote }}
+    authorization_policies:
+      grafana_admins:
+        default_policy: deny
+        rules:
+          - subject: 'group:admin'
+            policy: two_factor
+    claims_policies:
+      grafana:
+        id_token: ['email', 'name', 'groups', 'preferred_username']
+    clients:
+      - client_id: grafana-homelab
+        client_name: Grafana
+        client_secret: '{{ secret "/secrets/GRAFANA_CLIENT_SECRET_HASH" }}'
+        authorization_policy: grafana_admins
+        claims_policy: grafana
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - https://grafana.${base_domain}/login/generic_oauth
+        scopes: ['openid', 'profile', 'groups', 'email']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: none
+        userinfo_signed_response_alg: none
+        token_endpoint_auth_method: client_secret_basic
 
 notifier:
 %{ if smtp_enabled ~}
