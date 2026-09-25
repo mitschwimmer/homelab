@@ -6,4 +6,4 @@ users:
     email: replace-with-your-address@example.invalid
     groups:
       - family
-      - admin
+      - admins
