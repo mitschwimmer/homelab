@@ -1,7 +1,14 @@
-variable "authelia_bridge_ip" {
-  description = "Authelia's reserved IPv4 address on the existing incusbr0 bridge. Check that it is free before the first apply."
-  type        = string
-  default     = "10.221.180.10"
+variable "site" {
+  description = "Installation-specific IncusOS, LAN and domain settings. Use a local site.auto.tfvars; see site.auto.tfvars.example."
+  type = object({
+    incus_remote    = string
+    storage_pool    = string
+    private_bridge  = string
+    lan_parent      = string
+    caddy_mac       = string
+    authelia_ip     = string
+    base_domain     = string
+  })
 }
 
 variable "authelia_secret_directory" {

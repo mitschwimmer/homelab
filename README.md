@@ -5,21 +5,46 @@ consults Authelia over the private Incus bridge for protected routes.
 
 ## Prerequisites
 
-Use a workstation with OpenTofu and an authenticated Incus client remote named
-`IncusOS`. The existing `local` storage pool and `incusbr0` bridge are
-referenced, not recreated. The provider defines the public Docker Hub image
-remote in HCL and uses your existing Incus client authentication.
+Use a workstation with OpenTofu and an authenticated Incus client remote.
+Copy `site.auto.tfvars.example` to `site.auto.tfvars` and adjust its `site`
+values for your installation. The example contains the values of the original
+deployment, so copying it unchanged preserves those settings. The local file
+is ignored by Git. The specified storage pool and private bridge must already
+exist; the provider references them but does not create them. The example
+file documents how to identify each value. The provider defines the public
+Docker Hub image remote in HCL and uses your existing Incus client authentication.
 
-Caddy has two NICs: a macvlan on host interface `enp129s0` with MAC
-`02:00:00:ca:dd:01`, and an internal NIC on `incusbr0`. The router's existing
-DHCP reservation gives the macvlan NIC `192.168.1.200`; OpenTofu does not set a
-static LAN IP inside Caddy. Keep public DNS and port forwards pointing there.
+Before choosing `authelia_ip` for a new deployment, inspect the bridge's
+`ipv4.address` and any `ipv4.dhcp.ranges`, then check its allocations and
+DHCP leases (substitute your remote and bridge names):
 
-Authelia has only an `incusbr0` NIC. By default it reserves `10.221.180.10`
-on the existing `10.221.180.0/24` bridge; check that this address is free and
-set `authelia_bridge_ip` if it is not. Caddy uses that same value as its
-internal upstream. Add a public DNS record for `auth.mitschwimmer.de` pointing
-to the same public address as `mitschwimmer.de` before testing browser login.
+```sh
+incus network show IncusOS:incusbr0
+incus network list-allocations IncusOS: --all-projects
+incus network list-leases IncusOS:incusbr0
+```
+
+Pick an address inside the bridge subnet that is neither the gateway nor
+already allocated or leased. Prefer one outside the dynamic DHCP range when
+that range is explicitly configured. An address absent from those lists can
+still be used by an offline device with a manually set IP, so also check any
+static address assignments you maintain separately. If migrating the existing
+deployment, retain its current `authelia_ip` rather than selecting a new one.
+
+Caddy has a macvlan NIC on `lan_parent` with `caddy_mac`, plus an internal NIC
+on `private_bridge`. Reserve a LAN address for that MAC in your router's DHCP
+configuration, then forward public HTTP and HTTPS traffic to the reserved
+address. OpenTofu does not configure the router, public DNS, or Caddy's LAN IP.
+The host cannot directly reach its own macvlan instance; the private bridge
+provides an internal connection. Authelia uses `authelia_ip` on that bridge;
+Caddy uses the same address as its upstream. Point DNS for `base_domain` and
+`auth.<base_domain>` to your public address before testing browser login.
+
+For the existing deployment, the router reserves `192.168.1.200` for the MAC
+in the example site file; the existing private bridge uses `10.221.180.0/24`.
+When moving to another installation, use its own bridge subnet, interface,
+DHCP reservation, DNS records, and port forwards. Keep a separate OpenTofu
+state for each installation.
 
 ## Prepare Authelia identity data
 
@@ -65,19 +90,31 @@ apply; changing bytes at the same path alone does not trigger a re-upload.
 From the repository root, on the authenticated workstation:
 
 ```sh
+cp site.auto.tfvars.example site.auto.tfvars
+# Edit site.auto.tfvars for this installation before proceeding.
 export TF_VAR_authelia_secret_directory="$HOME/.config/homelab/authelia/v1"
 tofu init
 tofu plan
 tofu apply
 ```
 
+For an existing deployment, keep the values from the example initially and
+inspect `tofu plan` before applying. With those values, this refactor should
+make no infrastructure changes. Do not apply if the plan proposes to replace
+the running instances or volumes; check the site file and the existing state.
+On a different installation, use its own state and a site file with its own
+values. Do not commit either the local site file or state.
+
 Check both services and the public endpoints:
 
 ```sh
-incus list IncusOS:
-curl --resolve mitschwimmer.de:443:192.168.1.200 https://mitschwimmer.de/health
-curl --resolve auth.mitschwimmer.de:443:192.168.1.200 https://auth.mitschwimmer.de/api/health
-curl -I --resolve mitschwimmer.de:443:192.168.1.200 https://mitschwimmer.de/private
+INCUS_REMOTE=IncusOS # use the remote in your site file
+BASE_DOMAIN=mitschwimmer.de # use the domain in your site file
+CADDY_LAN_IP=192.168.1.200 # use your router's DHCP reservation
+incus list "$INCUS_REMOTE:"
+curl --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/health"
+curl --resolve "auth.$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://auth.$BASE_DOMAIN/api/health"
+curl -I --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/private"
 ```
 
 The unauthenticated `/private` request must redirect to login or be denied;
@@ -90,7 +127,7 @@ links to `/data/notification.txt` inside the Authelia instance. For immediate
 enrollment, read it privately with:
 
 ```sh
-incus exec IncusOS:authelia -- cat /data/notification.txt
+incus exec "$INCUS_REMOTE:authelia" -- cat /data/notification.txt
 ```
 
 To receive those messages in your inbox, create a private file named

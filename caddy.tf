@@ -1,11 +1,12 @@
 resource "incus_storage_volume" "caddy_etc" {
   name   = "caddy-etc"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 
   file {
     content     = templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = var.authelia_bridge_ip
+      authelia_ip = var.site.authelia_ip
+      base_domain = var.site.base_domain
     })
     target_path = "/Caddyfile"
     mode        = "0644"
@@ -14,26 +15,27 @@ resource "incus_storage_volume" "caddy_etc" {
 
 resource "incus_storage_volume" "caddy_data" {
   name   = "caddy-data"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 }
 
 resource "incus_storage_volume" "caddy_runtime" {
   name   = "caddy-runtime"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 }
 
 resource "incus_instance" "caddy" {
   name     = "caddy"
   image    = "oci-docker:library/caddy:2"
-  remote   = "IncusOS"
+  remote   = var.site.incus_remote
   profiles = []
 
   config = {
     "boot.autostart"        = "true"
     "user.caddyfile_sha256" = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = var.authelia_bridge_ip
+      authelia_ip = var.site.authelia_ip
+      base_domain = var.site.base_domain
     }))
   }
 
@@ -44,7 +46,8 @@ resource "incus_instance" "caddy" {
       command = ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
       environment = {
         CADDYFILE_SHA256 = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-          authelia_ip = var.authelia_bridge_ip
+          authelia_ip = var.site.authelia_ip
+          base_domain = var.site.base_domain
         }))
       }
       trigger = "on_change"
@@ -56,7 +59,7 @@ resource "incus_instance" "caddy" {
     type = "disk"
     properties = {
       path = "/"
-      pool = "local"
+      pool = var.site.storage_pool
     }
   }
 
@@ -65,8 +68,8 @@ resource "incus_instance" "caddy" {
     type = "nic"
     properties = {
       nictype = "macvlan"
-      parent  = "enp129s0"
-      hwaddr  = "02:00:00:ca:dd:01"
+      parent  = var.site.lan_parent
+      hwaddr  = var.site.caddy_mac
     }
   }
 
@@ -74,7 +77,7 @@ resource "incus_instance" "caddy" {
     name = "eth1"
     type = "nic"
     properties = {
-      network = "incusbr0"
+      network = var.site.private_bridge
     }
   }
 
@@ -83,7 +86,7 @@ resource "incus_instance" "caddy" {
     type = "disk"
     properties = {
       path   = "/etc/caddy"
-      pool   = "local"
+      pool   = var.site.storage_pool
       source = incus_storage_volume.caddy_etc.name
     }
   }
@@ -93,7 +96,7 @@ resource "incus_instance" "caddy" {
     type = "disk"
     properties = {
       path   = "/data"
-      pool   = "local"
+      pool   = var.site.storage_pool
       source = incus_storage_volume.caddy_data.name
     }
   }
@@ -103,7 +106,7 @@ resource "incus_instance" "caddy" {
     type = "disk"
     properties = {
       path   = "/config"
-      pool   = "local"
+      pool   = var.site.storage_pool
       source = incus_storage_volume.caddy_runtime.name
     }
   }

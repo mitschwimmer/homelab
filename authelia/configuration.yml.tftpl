@@ -16,16 +16,16 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
-    - domain: mitschwimmer.de
+    - domain: ${base_domain}
       resources:
         - '^/private$'
       policy: two_factor
 
 session:
   cookies:
-    - domain: mitschwimmer.de
-      authelia_url: https://auth.mitschwimmer.de
-      default_redirection_url: https://mitschwimmer.de
+    - domain: ${base_domain}
+      authelia_url: https://auth.${base_domain}
+      default_redirection_url: https://${base_domain}
 
 storage:
   local:
