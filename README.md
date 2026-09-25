@@ -92,9 +92,9 @@ apply; changing bytes at the same path alone does not trigger a re-upload.
 Prometheus and Grafana each run as an OCI instance on the private Incus bridge.
 Prometheus keeps its time series on a persistent volume and provisions Grafana's
 Prometheus data source. Caddy serves `https://grafana.<base_domain>` and asks
-Authelia to allow only members of the `admin` group with two factor
+Authelia to allow only members of the `admins` group with two factor
 authentication. Grafana also uses Authelia OpenID Connect, independently checks
-membership in `admin`, and grants those users the Grafana server administrator
+membership in `admins`, and grants those users the Grafana server administrator
 role. Prometheus and the application metrics ports are not routed publicly.
 
 Choose free `prometheus_ip` and `grafana_ip` values using the bridge checks
@@ -105,10 +105,9 @@ different `dns.domain`, set `private_dns_domain` accordingly. Create a public
 DNS record for `grafana.<base_domain>` pointing to the same address as Caddy.
 The router only needs its existing HTTP and HTTPS forwards.
 
-Your **private**, existing Authelia `users.yml` must list `admin` under `groups`
-for each person who should administer Grafana. The original example used the
-different name `admins`; changing the repository's example does not edit your
-private user file. Do this before testing the new route.
+Your **private**, existing Authelia `users.yml` must list `admins` under
+`groups` for each person who should administer Grafana. The example already
+uses this name; no change is needed if your private file also uses it.
 
 Create another private directory **outside this checkout** and generate the
 OIDC signing key, HMAC secret, Grafana encryption key, and bootstrap password:
@@ -213,7 +212,7 @@ incus exec "$INCUS_REMOTE:prometheus" -- promtool check config /etc/prometheus/p
 ```
 
 An unauthenticated Grafana request should
-redirect to Authelia, and only an `admin` group member should reach Grafana
+redirect to Authelia, and only an `admins` group member should reach Grafana
 and see server administration. In Grafana Explore, query `up` and inspect the
 Prometheus targets; every configured target should become `1`. For Incus,
 also query an `incus_` metric to verify instance data. If Grafana's OIDC
