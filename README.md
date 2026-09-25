@@ -123,12 +123,13 @@ openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_SECRET_KEY"
 openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_ADMIN_PASSWORD"
 ```
 
-Generate one client secret and its PBKDF2 digest with the same Authelia version
-as the declared image (NixOS example):
+Generate one client secret and its PBKDF2 digest using the declared Authelia
+image (Docker example; the same CLI can run from a local installation):
 
 ```sh
-nix shell nixpkgs#authelia --command authelia crypto hash generate pbkdf2 \
-  --variant sha512 --random --random.length 72 --random.charset rfc3986
+docker run --rm authelia/authelia:4.39.28 \
+  authelia crypto hash generate pbkdf2 --variant sha512 \
+  --random --random.length 72 --random.charset rfc3986
 ```
 
 Store the printed plaintext secret, without a label or trailing spaces, in
