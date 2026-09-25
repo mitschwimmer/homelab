@@ -7,6 +7,9 @@ variable "site" {
     lan_parent      = string
     caddy_mac       = string
     authelia_ip     = string
+    prometheus_ip   = string
+    grafana_ip      = string
+    private_dns_domain = string
     base_domain     = string
   })
 }
@@ -25,4 +28,28 @@ variable "authelia_smtp" {
     startup_check_address = string
   })
   default = null
+}
+
+variable "monitoring_secret_directory" {
+  description = "Private directory outside the checkout with Grafana and OIDC secrets. File paths, not contents, are recorded in state."
+  type        = string
+}
+
+variable "incus_metrics" {
+  description = "Optional authenticated Incus metrics endpoint. Put its TLS certificate and key in monitoring_secret_directory before enabling."
+  type = object({
+    target      = string
+    server_name = string
+  })
+  default = null
+}
+
+variable "prometheus_extra_targets" {
+  description = "Additional private HTTP Prometheus exporters, for example the Immich API and microservices endpoints once deployed."
+  type = list(object({
+    job_name     = string
+    target       = string
+    metrics_path = string
+  }))
+  default = []
 }
