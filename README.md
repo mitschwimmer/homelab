@@ -10,9 +10,26 @@ Copy `site.auto.tfvars.example` to `site.auto.tfvars` and adjust its `site`
 values for your installation. The example contains the values of the original
 deployment, so copying it unchanged preserves those settings. The local file
 is ignored by Git. The specified storage pool and private bridge must already
-exist; the provider references them but does not create them. Check that
-`authelia_ip` is free on the private bridge. The provider defines the public
+exist; the provider references them but does not create them. The example
+file documents how to identify each value. The provider defines the public
 Docker Hub image remote in HCL and uses your existing Incus client authentication.
+
+Before choosing `authelia_ip` for a new deployment, inspect the bridge's
+`ipv4.address` and any `ipv4.dhcp.ranges`, then check its allocations and
+DHCP leases (substitute your remote and bridge names):
+
+```sh
+incus network show IncusOS:incusbr0
+incus network list-allocations IncusOS: --all-projects
+incus network list-leases IncusOS:incusbr0
+```
+
+Pick an address inside the bridge subnet that is neither the gateway nor
+already allocated or leased. Prefer one outside the dynamic DHCP range when
+that range is explicitly configured. An address absent from those lists can
+still be used by an offline device with a manually set IP, so also check any
+static address assignments you maintain separately. If migrating the existing
+deployment, retain its current `authelia_ip` rather than selecting a new one.
 
 Caddy has a macvlan NIC on `lan_parent` with `caddy_mac`, plus an internal NIC
 on `private_bridge`. Reserve a LAN address for that MAC in your router's DHCP
