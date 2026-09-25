@@ -7,6 +7,7 @@ resource "incus_storage_volume" "caddy_etc" {
     content     = templatefile("${path.module}/caddy/Caddyfile", {
       authelia_ip = var.site.authelia_ip
       base_domain = var.site.base_domain
+      grafana_ip = var.site.grafana_ip
     })
     target_path = "/Caddyfile"
     mode        = "0644"
@@ -36,6 +37,7 @@ resource "incus_instance" "caddy" {
     "user.caddyfile_sha256" = sha256(templatefile("${path.module}/caddy/Caddyfile", {
       authelia_ip = var.site.authelia_ip
       base_domain = var.site.base_domain
+      grafana_ip = var.site.grafana_ip
     }))
   }
 
@@ -48,6 +50,7 @@ resource "incus_instance" "caddy" {
         CADDYFILE_SHA256 = sha256(templatefile("${path.module}/caddy/Caddyfile", {
           authelia_ip = var.site.authelia_ip
           base_domain = var.site.base_domain
+          grafana_ip = var.site.grafana_ip
         }))
       }
       trigger = "on_change"
