@@ -1,12 +1,20 @@
+locals {
+  grafana_datasource_configuration = templatefile("${path.module}/grafana/datasources.yml.tftpl", {
+    prometheus_ip = var.site.prometheus_ip
+  })
+}
+
+resource "terraform_data" "grafana_provisioning" {
+  triggers_replace = sha256(local.grafana_datasource_configuration)
+}
+
 resource "incus_storage_volume" "grafana_provisioning" {
   name   = "grafana-provisioning"
   pool   = var.site.storage_pool
   remote = var.site.incus_remote
 
   file {
-    content = templatefile("${path.module}/grafana/datasources.yml.tftpl", {
-      prometheus_ip = var.site.prometheus_ip
-    })
+    content     = local.grafana_datasource_configuration
     target_path = "/datasources.yml"
     mode        = "0644"
   }
@@ -58,6 +66,10 @@ resource "incus_instance" "grafana" {
   image    = "oci-docker:grafana/grafana:13.1.0"
   remote   = var.site.incus_remote
   profiles = []
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.grafana_provisioning]
+  }
 
   config = {
     "boot.autostart" = "true"
