@@ -10,11 +10,11 @@ terraform {
 }
 
 provider "incus" {
-  default_remote = "IncusOS"
+  default_remote = var.site.incus_remote
 
   # Uses the pre-authenticated client-side Incus remote.
   remote {
-    name = "IncusOS"
+    name = var.site.incus_remote
   }
 
   remote {
