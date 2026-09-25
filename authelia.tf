@@ -5,6 +5,7 @@ locals {
     smtp_username       = var.authelia_smtp == null ? "" : var.authelia_smtp.username
     smtp_sender         = var.authelia_smtp == null ? "" : var.authelia_smtp.sender
     smtp_check_address  = var.authelia_smtp == null ? "" : var.authelia_smtp.startup_check_address
+    base_domain         = var.site.base_domain
   })
 }
 
@@ -14,8 +15,8 @@ resource "terraform_data" "authelia_configuration" {
 
 resource "incus_storage_volume" "authelia_config" {
   name   = "authelia-config"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 
   file {
     content     = local.authelia_configuration
@@ -26,8 +27,8 @@ resource "incus_storage_volume" "authelia_config" {
 
 resource "incus_storage_volume" "authelia_secrets" {
   name   = "authelia-secrets"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 
   # source_path makes the provider read bytes at apply time. The state records
   # file paths rather than the session keys, encryption key or password hashes.
@@ -67,14 +68,14 @@ resource "incus_storage_volume" "authelia_secrets" {
 
 resource "incus_storage_volume" "authelia_data" {
   name   = "authelia-data"
-  pool   = "local"
-  remote = "IncusOS"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
 }
 
 resource "incus_instance" "authelia" {
   name     = "authelia"
   image    = "oci-docker:authelia/authelia:4.39.28"
-  remote   = "IncusOS"
+  remote   = var.site.incus_remote
   profiles = []
 
   config = merge({
@@ -97,7 +98,7 @@ resource "incus_instance" "authelia" {
     type = "disk"
     properties = {
       path = "/"
-      pool = "local"
+      pool = var.site.storage_pool
     }
   }
 
@@ -105,8 +106,8 @@ resource "incus_instance" "authelia" {
     name = "eth0"
     type = "nic"
     properties = {
-      network        = "incusbr0"
-      "ipv4.address" = var.authelia_bridge_ip
+      network        = var.site.private_bridge
+      "ipv4.address" = var.site.authelia_ip
     }
   }
 
@@ -115,7 +116,7 @@ resource "incus_instance" "authelia" {
     type = "disk"
     properties = {
       path   = "/config"
-      pool   = "local"
+      pool   = var.site.storage_pool
       source = incus_storage_volume.authelia_config.name
     }
   }
@@ -125,7 +126,7 @@ resource "incus_instance" "authelia" {
     type = "disk"
     properties = {
       path     = "/secrets"
-      pool     = "local"
+      pool     = var.site.storage_pool
       source   = incus_storage_volume.authelia_secrets.name
       readonly = "true"
     }
@@ -136,7 +137,7 @@ resource "incus_instance" "authelia" {
     type = "disk"
     properties = {
       path   = "/data"
-      pool   = "local"
+      pool   = var.site.storage_pool
       source = incus_storage_volume.authelia_data.name
     }
   }
