@@ -1,0 +1,11 @@
+# Copy to site.auto.tfvars and set values for this IncusOS installation.
+# The values below reproduce the existing deployment; check them before applying.
+site = {
+  incus_remote   = "IncusOS"
+  storage_pool   = "local"
+  private_bridge = "incusbr0"
+  lan_parent     = "enp129s0"
+  caddy_mac      = "02:00:00:ca:dd:01"
+  authelia_ip    = "10.221.180.10"
+  base_domain    = "mitschwimmer.de"
+}
