@@ -1,11 +1,32 @@
 # Copy to site.auto.tfvars and set values for this IncusOS installation.
-# The values below reproduce the existing deployment; check them before applying.
+# These values reproduce the existing deployment. Preserve them when migrating
+# that deployment; choose new values only for a different installation.
+# HCL accepts comments inside object values, so each input is documented here.
 site = {
+  # Incus client alias from `incus remote list` (already authenticated).
   incus_remote   = "IncusOS"
+
+  # Existing pool from `incus storage list IncusOS:`.
   storage_pool   = "local"
+
+  # Existing managed bridge from `incus network list IncusOS:`. Inspect its
+  # subnet with `incus network show IncusOS:incusbr0`.
   private_bridge = "incusbr0"
+
+  # Physical host interface connected to the LAN; inspect `incus network list
+  # IncusOS:`. The Caddy macvlan NIC attaches to this interface.
   lan_parent     = "enp129s0"
+
+  # Unique locally administered unicast MAC for Caddy's LAN NIC. Reserve a
+  # fixed LAN address for it in the router's DHCP settings; keep this MAC
+  # unchanged when reusing the existing DHCP reservation.
   caddy_mac      = "02:00:00:ca:dd:01"
+
+  # Free address on the private bridge's IPv4 subnet, reserved for Authelia.
+  # See the README for the allocation and DHCP lease checks before choosing.
   authelia_ip    = "10.221.180.10"
+
+  # Domain you control, with public DNS for it and auth.<base_domain> both
+  # pointing to the router's public address.
   base_domain    = "mitschwimmer.de"
 }
