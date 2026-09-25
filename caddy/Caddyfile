@@ -1,3 +1,7 @@
+{
+    metrics
+}
+
 ${base_domain} {
     handle /private {
         route {
@@ -20,4 +24,16 @@ ${base_domain} {
 
 auth.${base_domain} {
     reverse_proxy http://${authelia_ip}:9091
+}
+
+grafana.${base_domain} {
+    forward_auth http://${authelia_ip}:9091 {
+        uri /api/authz/forward-auth
+    }
+    reverse_proxy http://${grafana_ip}:3000
+}
+
+# Listen on the internal bridge too; do not forward this port from the router.
+:9180 {
+    metrics /metrics
 }

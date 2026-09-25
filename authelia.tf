@@ -64,6 +64,24 @@ resource "incus_storage_volume" "authelia_secrets" {
       mode        = "0600"
     }
   }
+
+  file {
+    source_path = "${var.monitoring_secret_directory}/OIDC_HMAC_SECRET"
+    target_path = "/OIDC_HMAC_SECRET"
+    mode        = "0600"
+  }
+
+  file {
+    source_path = "${var.monitoring_secret_directory}/OIDC_JWKS"
+    target_path = "/OIDC_JWKS"
+    mode        = "0600"
+  }
+
+  file {
+    source_path = "${var.monitoring_secret_directory}/GRAFANA_CLIENT_SECRET_HASH"
+    target_path = "/GRAFANA_CLIENT_SECRET_HASH"
+    mode        = "0600"
+  }
 }
 
 resource "incus_storage_volume" "authelia_data" {
@@ -83,6 +101,8 @@ resource "incus_instance" "authelia" {
     "environment.AUTHELIA_SESSION_SECRET_FILE" = "/secrets/SESSION_SECRET"
     "environment.AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE" = "/secrets/STORAGE_ENCRYPTION_KEY"
     "environment.AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE" = "/secrets/RESET_PASSWORD_JWT_SECRET"
+    "environment.AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE" = "/secrets/OIDC_HMAC_SECRET"
+    "environment.X_AUTHELIA_CONFIG_FILTERS" = "template"
   }, var.authelia_smtp == null ? {} : {
     "environment.AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE" = "/secrets/SMTP_PASSWORD"
   })

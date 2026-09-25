@@ -11,7 +11,9 @@ values for your installation. The example contains the values of the original
 deployment, so copying it unchanged preserves those settings. The local file
 is ignored by Git. The specified storage pool and private bridge must already
 exist; the provider references them but does not create them. The example
-file documents how to identify each value. The provider defines the public
+file documents how to identify each value. For an existing deployment, add
+`prometheus_ip`, `grafana_ip`, and `private_dns_domain` to the local site file;
+choose unused private bridge addresses for the first two. The provider defines the public
 Docker Hub image remote in HCL and uses your existing Incus client authentication.
 
 Before choosing `authelia_ip` for a new deployment, inspect the bridge's
@@ -85,25 +87,109 @@ OpenTofu state holds the local paths but not their contents. On rotation, use
 a new versioned directory, change `TF_VAR_authelia_secret_directory` and
 apply; changing bytes at the same path alone does not trigger a re-upload.
 
+## Prepare monitoring
+
+Prometheus and Grafana each run as an OCI instance on the private Incus bridge.
+Prometheus keeps its time series on a persistent volume and provisions Grafana's
+Prometheus data source. Caddy serves `https://grafana.<base_domain>` and asks
+Authelia to allow only members of the `admins` group with two factor
+authentication. Grafana also uses Authelia OpenID Connect, independently checks
+membership in `admins`, and grants those users the Grafana server administrator
+role. Prometheus and the application metrics ports are not routed publicly.
+
+Choose free `prometheus_ip` and `grafana_ip` values using the bridge checks
+above. The existing example proposes `10.221.180.11` and `10.221.180.12`;
+check them before applying. Ensure the private bridge resolves
+`caddy.<private_dns_domain>` to Caddy's bridge NIC. If your bridge has a
+different `dns.domain`, set `private_dns_domain` accordingly. Create a public
+DNS record for `grafana.<base_domain>` pointing to the same address as Caddy.
+The router only needs its existing HTTP and HTTPS forwards.
+
+Your **private**, existing Authelia `users.yml` must list `admins` under
+`groups` for each person who should administer Grafana. The example already
+uses this name; no change is needed if your private file also uses it.
+
+Create another private directory **outside this checkout** and generate the
+OIDC signing key, HMAC secret, Grafana encryption key, and bootstrap password:
+
+```sh
+umask 077
+mkdir -p "$HOME/.config/homelab/monitoring/v1"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+  -out "$HOME/.config/homelab/monitoring/v1/OIDC_JWKS"
+openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/OIDC_HMAC_SECRET"
+openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_SECRET_KEY"
+openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_ADMIN_PASSWORD"
+```
+
+Generate one client secret and its PBKDF2 digest using the declared Authelia
+image (Docker example; the same CLI can run from a local installation):
+
+```sh
+docker run --rm authelia/authelia:4.39.28 \
+  authelia crypto hash generate pbkdf2 --variant sha512 \
+  --random --random.length 72 --random.charset rfc3986
+```
+
+Store the printed plaintext secret, without a label or trailing spaces, in
+`GRAFANA_CLIENT_SECRET` in that private directory and the printed digest in
+`GRAFANA_CLIENT_SECRET_HASH`. These **must match**. Keep both out of shell
+history and Git. The digest is loaded by Authelia from its secret volume at
+startup; Grafana reads the plaintext using its `__FILE` setting. Back up this
+directory and the Grafana data volume privately. Preserve the OIDC signing key
+and Grafana encryption key across instance replacements.
+
+By default Prometheus scrapes itself, Caddy, Authelia, and Grafana. IncusOS
+instance and host metrics require a separate authenticated TLS connection.
+To add it, first check whether your authenticated Incus remote already exposes
+`/1.0/metrics` on its HTTPS address. Otherwise, configure the server's
+`core.metrics_address` on a reachable internal address (see the [Incus metrics
+guide](https://linuxcontainers.org/incus/docs/main/metrics/)). Create a metrics
+certificate and register it as **type metrics**, not a general client:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 \
+  -keyout "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_KEY" -nodes \
+  -out "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_CERT" -days 3650 \
+  -subj "/CN=homelab-metrics"
+incus config trust add-certificate IncusOS: \
+  "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_CERT" --type=metrics
+```
+
+Copy the Incus server certificate already trusted by the Incus client to
+`INCUS_SERVER_CERT` in that private directory (commonly
+`$HOME/.config/incus/servercerts/IncusOS.crt`). Check its subject alternative
+names with `openssl x509 -in INCUS_SERVER_CERT -noout -text` to select
+`incus_metrics.server_name`. Add `incus_metrics` with its reachable host:port
+to `site.auto.tfvars`, as shown in the example. TLS server verification and
+client certificate authentication remain enabled. If IncusOS already exposes
+the HTTPS API to your workstation, do not open a second listener just for this.
+
+Later, after enabling `IMMICH_TELEMETRY_INCLUDE=all` in an Immich deployment,
+add its API and microservices `:8081` and `:8082` exporters through
+`prometheus_extra_targets`; the example site file shows both jobs. Add other
+private HTTP exporters the same way. Do not add targets until they exist.
+
 ## Apply
 
 From the repository root, on the authenticated workstation:
 
 ```sh
-cp site.auto.tfvars.example site.auto.tfvars
-# Edit site.auto.tfvars for this installation before proceeding.
+test -e site.auto.tfvars || cp site.auto.tfvars.example site.auto.tfvars
+# Review the site values; preserve any existing local settings.
 export TF_VAR_authelia_secret_directory="$HOME/.config/homelab/authelia/v1"
+export TF_VAR_monitoring_secret_directory="$HOME/.config/homelab/monitoring/v1"
 tofu init
 tofu plan
 tofu apply
 ```
 
-For an existing deployment, keep the values from the example initially and
-inspect `tofu plan` before applying. With those values, this refactor should
-make no infrastructure changes. Do not apply if the plan proposes to replace
-the running instances or volumes; check the site file and the existing state.
-On a different installation, use its own state and a site file with its own
-values. Do not commit either the local site file or state.
+For an existing deployment, preserve its original site values and inspect
+`tofu plan` before applying. This addition creates Prometheus and Grafana,
+updates Caddy's configuration, and replaces the Authelia instance to enable
+metrics and OIDC while retaining its data and secrets volumes. The plan should
+not replace Caddy or destroy existing data volumes. On another IncusOS
+installation, use a separate state and site file. Do not commit either.
 
 Check both services and the public endpoints:
 
@@ -115,7 +201,24 @@ incus list "$INCUS_REMOTE:"
 curl --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/health"
 curl --resolve "auth.$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://auth.$BASE_DOMAIN/api/health"
 curl -I --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/private"
+curl -I --resolve "grafana.$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://grafana.$BASE_DOMAIN/"
 ```
+
+Check `incus list "$INCUS_REMOTE:"` for Prometheus and Grafana and validate
+the configuration with:
+
+```sh
+incus exec "$INCUS_REMOTE:prometheus" -- promtool check config /etc/prometheus/prometheus.yml
+```
+
+An unauthenticated Grafana request should
+redirect to Authelia, and only an `admins` group member should reach Grafana
+and see server administration. In Grafana Explore, query `up` and inspect the
+Prometheus targets; every configured target should become `1`. For Incus,
+also query an `incus_` metric to verify instance data. If Grafana's OIDC
+callback fails, check that Grafana can resolve and reach the public
+`auth.<base_domain>` URL from its private bridge (the split DNS setup must
+work there as well).
 
 The unauthenticated `/private` request must redirect to login or be denied;
 it must never return `200`. The root site's health route stays public.

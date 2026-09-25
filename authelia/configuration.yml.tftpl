@@ -20,6 +20,10 @@ access_control:
       resources:
         - '^/private$'
       policy: two_factor
+    # Caddy's forward auth checks this before Grafana's own OIDC login.
+    - domain: grafana.${base_domain}
+      subject: 'group:admins'
+      policy: two_factor
 
 session:
   cookies:
@@ -30,6 +34,54 @@ session:
 storage:
   local:
     path: /data/db.sqlite3
+
+telemetry:
+  metrics:
+    # Prometheus scrapes this port on the private Incus bridge; Caddy does not publish it.
+    enabled: true
+    address: tcp://0.0.0.0:9959/metrics
+
+identity_providers:
+  oidc:
+    # Private RSA key mounted from outside Git; Authelia uses it to sign ID tokens.
+    jwks:
+      - key: {{ secret "/secrets/OIDC_JWKS" | mindent 10 "|" | msquote }}
+    # Only members of the existing admins group may complete Grafana's OIDC flow.
+    # Deny by default and require a second factor even for authenticated users.
+    authorization_policies:
+      grafana_admins:
+        default_policy: deny
+        rules:
+          - subject: 'group:admins'
+            policy: two_factor
+    # Grafana reads the username, email, and group for its local admin role
+    # from the ID token, so include these claims there explicitly.
+    claims_policies:
+      grafana:
+        id_token: ['email', 'name', 'groups', 'preferred_username']
+    clients:
+      - client_id: grafana-homelab
+        client_name: Grafana
+        # Authelia stores a hash; Grafana reads the matching plaintext secret privately.
+        client_secret: '{{ secret "/secrets/GRAFANA_CLIENT_SECRET_HASH" }}'
+        authorization_policy: grafana_admins
+        claims_policy: grafana
+        # Bind the authorization code to Grafana's login attempt using SHA-256 PKCE.
+        require_pkce: true
+        pkce_challenge_method: S256
+        # Only Grafana's OAuth callback can receive the authorization code.
+        redirect_uris:
+          - https://grafana.${base_domain}/login/generic_oauth
+        scopes: ['openid', 'profile', 'groups', 'email']
+        # Browser login uses the authorization code flow, never an implicit token.
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        # Grafana does not need signed access-token or userinfo responses;
+        # the ID token remains signed by the JWKS key above.
+        access_token_signed_response_alg: none
+        userinfo_signed_response_alg: none
+        # Grafana authenticates to the token endpoint with HTTP Basic credentials.
+        token_endpoint_auth_method: client_secret_basic
 
 notifier:
 %{ if smtp_enabled ~}

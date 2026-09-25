@@ -26,7 +26,25 @@ site = {
   # See the README for the allocation and DHCP lease checks before choosing.
   authelia_ip    = "10.221.180.10"
 
+  # Reserve two more unused IPv4 addresses on the private bridge, as above.
+  prometheus_ip = "10.221.180.11"
+  grafana_ip    = "10.221.180.12"
+
+  # `dns.domain` from `incus network show IncusOS:incusbr0`.
+  private_dns_domain = "incus"
+
   # Domain you control, with public DNS for it and auth.<base_domain> both
   # pointing to the router's public address.
   base_domain    = "mitschwimmer.de"
 }
+
+# Add other exporters only after their services exist. For example, once
+# Immich enables telemetry, add jobs for its API and microservices ports:
+# prometheus_extra_targets = [
+#   { job_name = "immich-api", target = "10.221.180.20:8081", metrics_path = "/metrics" },
+#   { job_name = "immich-microservices", target = "10.221.180.20:8082", metrics_path = "/metrics" },
+# ]
+
+# To collect IncusOS instance and host metrics, follow the Incus TLS setup in
+# the README, then set the reachable host:port and its certificate SAN name:
+# incus_metrics = { target = "192.168.1.100:8443", server_name = "incusos" }

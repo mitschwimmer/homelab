@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['${prometheus_ip}:9090']
+
+  - job_name: caddy
+    static_configs:
+      - targets: ['caddy.${private_dns_domain}:9180']
+
+  - job_name: authelia
+    static_configs:
+      - targets: ['${authelia_ip}:9959']
+
+  - job_name: grafana
+    static_configs:
+      - targets: ['${grafana_ip}:3000']
+%{ if incus_metrics_enabled ~}
+
+  - job_name: incus
+    scrape_interval: 60s
+    metrics_path: /1.0/metrics
+    scheme: https
+    static_configs:
+      - targets: [${jsonencode(incus_metrics_target)}]
+    tls_config:
+      ca_file: /etc/prometheus/INCUS_SERVER_CERT
+      cert_file: /etc/prometheus/INCUS_METRICS_CERT
+      key_file: /etc/prometheus/INCUS_METRICS_KEY
+      server_name: ${jsonencode(incus_metrics_server_name)}
+%{ endif ~}
+%{ for target in extra_targets ~}
+
+  - job_name: ${jsonencode(target.job_name)}
+    metrics_path: ${jsonencode(target.metrics_path)}
+    static_configs:
+      - targets: [${jsonencode(target.target)}]
+%{ endfor ~}
