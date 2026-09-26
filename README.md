@@ -22,15 +22,35 @@ with a new state. Do not apply the old state to the reset machine.
 From an authenticated Incus client, substitute your remote name and run:
 
 ```sh
-incus admin os system factory-reset IncusOS: -d '{"wipe_existing_seeds":true}'
+incus admin os system factory-reset IncusOS:
 ```
 
-The command prompts for confirmation and reboots the system. The explicit
-`wipe_existing_seeds` prevents an existing installation seed from
-reinstalling applications or applying old configuration on first boot. Set up
-IncusOS and its Incus application again, authenticate a new client remote,
-and create/select a storage pool and a private managed bridge. Check their
-names with `incus storage list IncusOS:` and `incus network list IncusOS:`.
+The command prompts for confirmation and reboots the system. A basic reset
+reuses the existing installation seed, so inspect it first: a seed can recreate
+the base Incus application and its initial configuration, including the
+trusted client certificate needed to manage the new installation. The reset
+still removes the deployed homelab workloads. Do not set
+`wipe_existing_seeds` unless you have prepared a replacement seed with your
+trusted Incus client certificate; without one, the IncusOS API and web UI may
+be inaccessible after reboot.
+
+The reset replaces the server certificate. On the workstation, check the new
+IP address shown on the IncusOS console, then remove the stale remote and add
+it again. Confirm the new server fingerprint for the expected host:
+
+```sh
+incus remote remove IncusOS
+incus remote add IncusOS <host-IP>
+incus list IncusOS:
+```
+
+If adding the remote succeeds but `incus list` reports an untrusted client,
+the new installation did not enroll your client certificate. Re-adding the
+remote only refreshes the workstation's trust of the server; it cannot grant
+the server trust in the client. Restore access using a seed containing your
+client certificate or the documented IncusOS lost-client-certificate recovery
+procedure before deploying anything. Check the storage pool and bridge names
+with `incus storage list IncusOS:` and `incus network list IncusOS:`.
 See the [IncusOS factory reset reference](https://linuxcontainers.org/incus-os/docs/main/reference/system/backup/#factory-reset).
 
 ## Prepare the workstation and site
