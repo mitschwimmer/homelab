@@ -44,6 +44,28 @@ Configure public DNS for the base domain, `auth`, and `grafana`. No public route
 to OpenBao or the monitoring ports is required.
 
 Inspect the bridge before assigning the four workload IPs:
+OpenTofu definitions for the IncusOS homelab: Caddy serves public HTTPS and
+consults Authelia over the private Incus bridge for protected routes.
+
+The [Caddy and Authelia architecture decision](docs/adr/0001-caddy-and-authelia.md)
+records the reasons for this arrangement and its tradeoffs.
+
+## Prerequisites
+
+Use a workstation with OpenTofu and an authenticated Incus client remote.
+Copy `site.auto.tfvars.example` to `site.auto.tfvars` and adjust its `site`
+values for your installation. The example contains the values of the original
+deployment, so copying it unchanged preserves those settings. The local file
+is ignored by Git. The specified storage pool and private bridge must already
+exist; the provider references them but does not create them. The example
+file documents how to identify each value. For an existing deployment, add
+`prometheus_ip`, `grafana_ip`, and `private_dns_domain` to the local site file;
+choose unused private bridge addresses for the first two. The provider defines the public
+Docker Hub image remote in HCL and uses your existing Incus client authentication.
+
+Before choosing `authelia_ip` for a new deployment, inspect the bridge's
+`ipv4.address` and any `ipv4.dhcp.ranges`, then check its allocations and
+DHCP leases (substitute your remote and bridge names):
 
 ```sh
 incus network show IncusOS:incusbr0
