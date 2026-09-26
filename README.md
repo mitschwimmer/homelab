@@ -44,28 +44,6 @@ Configure public DNS for the base domain, `auth`, and `grafana`. No public route
 to OpenBao or the monitoring ports is required.
 
 Inspect the bridge before assigning the four workload IPs:
-OpenTofu definitions for the IncusOS homelab: Caddy serves public HTTPS and
-consults Authelia over the private Incus bridge for protected routes.
-
-The [Caddy and Authelia architecture decision](docs/adr/0001-caddy-and-authelia.md)
-records the reasons for this arrangement and its tradeoffs.
-
-## Prerequisites
-
-Use a workstation with OpenTofu and an authenticated Incus client remote.
-Copy `site.auto.tfvars.example` to `site.auto.tfvars` and adjust its `site`
-values for your installation. The example contains the values of the original
-deployment, so copying it unchanged preserves those settings. The local file
-is ignored by Git. The specified storage pool and private bridge must already
-exist; the provider references them but does not create them. The example
-file documents how to identify each value. For an existing deployment, add
-`prometheus_ip`, `grafana_ip`, and `private_dns_domain` to the local site file;
-choose unused private bridge addresses for the first two. The provider defines the public
-Docker Hub image remote in HCL and uses your existing Incus client authentication.
-
-Before choosing `authelia_ip` for a new deployment, inspect the bridge's
-`ipv4.address` and any `ipv4.dhcp.ranges`, then check its allocations and
-DHCP leases (substitute your remote and bridge names):
 
 ```sh
 incus network show IncusOS:incusbr0
@@ -234,6 +212,26 @@ Prometheus and Grafana's data volumes stay persistent. Extra exporters can be
 listed in `prometheus_extra_targets` once reachable on the private network.
 
 ## Enroll each workload
+
+### Why the OCI workloads have a launcher
+
+Authelia, Grafana, and Prometheus use upstream OCI images without systemd.
+Their OpenBao Agent must authenticate and render files before the application
+starts. The mounted `openbao/start-oci.sh` is the instance's PID 1: it starts
+Agent, waits for the required files in tmpfs, starts the image's original
+application command, forwards termination, and stops the application if Agent
+exits. It contains no credentials and is shared read-only with the pinned
+`bao` binary.
+
+The alternative with the fewest moving parts inside each OCI instance is
+OpenBao Agent's `exec` process supervisor. OpenBao 2.7 still marks it public
+beta, and it cannot be combined with the file templates used here. Using it
+would require changing the applications to receive secrets through environment
+variables. Another option is rebuilding the three upstream images with a
+general-purpose supervisor. System containers with systemd would also avoid
+this launcher, but would change how these upstream applications are packaged
+and updated. Revisit the choice if file templates become compatible with a
+stable Agent supervisor.
 
 OpenTofu contains only policy names, KV paths, and file destinations. Apply
 these narrow policies directly to OpenBao, outside OpenTofu:
