@@ -10,7 +10,7 @@ log:
 
 authentication_backend:
   file:
-    path: /run/secrets/users.yml
+    path: /var/lib/homelab-secrets/users.yml
     watch: true
 
 access_control:
@@ -43,9 +43,9 @@ telemetry:
 
 identity_providers:
   oidc:
-    # Private RSA key mounted from outside Git; Authelia uses it to sign ID tokens.
+    # Private RSA key supplied from OpenBao; Authelia uses it to sign ID tokens.
     jwks:
-      - key: {{ secret "/run/secrets/oidc_jwks" | mindent 10 "|" | msquote }}
+      - key: {{ secret "/var/lib/homelab-secrets/oidc_jwks" | mindent 10 "|" | msquote }}
     # Only members of the existing admins group may complete Grafana's OIDC flow.
     # Deny by default and require a second factor even for authenticated users.
     authorization_policies:
@@ -63,7 +63,7 @@ identity_providers:
       - client_id: grafana-homelab
         client_name: Grafana
         # Authelia stores a hash; Grafana reads the matching plaintext secret privately.
-        client_secret: '{{ secret "/run/secrets/grafana_client_secret_hash" }}'
+        client_secret: '{{ secret "/var/lib/homelab-secrets/grafana_client_secret_hash" }}'
         authorization_policy: grafana_admins
         claims_policy: grafana
         # Bind the authorization code to Grafana's login attempt using SHA-256 PKCE.

@@ -46,11 +46,10 @@ resource "incus_instance" "prometheus" {
   profiles = []
 
   config = {
-    "boot.autostart" = "true"
+    "boot.autostart"   = "true"
     "boot.autorestart" = "true"
-    "oci.entrypoint" = "/opt/platform/start-oci.sh"
-    "environment.HOMELAB_SERVICE" = "prometheus"
-    "environment.HOMELAB_REQUIRED_SECRETS" = join(" ", local.workload_fields.prometheus)
+    "oci.uid"          = "65534"
+    "oci.gid"          = "65534"
   }
 
   lifecycle {
@@ -96,48 +95,17 @@ resource "incus_instance" "prometheus" {
     }
   }
 
-  device {
-    name = "agent-config"
-    type = "disk"
-    properties = {
-      path = "/etc/openbao"
-      pool = var.site.storage_pool
-      source = incus_storage_volume.workload_agent["prometheus"].name
-      readonly = "true"
-    }
-  }
-
-  device {
-    name = "auth"
-    type = "disk"
-    properties = {
-      path = "/var/lib/openbao-auth"
-      pool = var.site.storage_pool
-      source = incus_storage_volume.workload_auth["prometheus"].name
-    }
-  }
-
-  device {
-    name = "tools"
-    type = "disk"
-    properties = {
-      path = "/opt/platform"
-      pool = var.site.storage_pool
-      source = incus_storage_volume.platform_tools.name
-      readonly = "true"
-    }
-  }
-
-  device {
-    name = "runtime-secrets"
-    type = "disk"
-    properties = {
-      path = "/run/secrets"
-      source = "tmpfs:"
-      size = "1MiB"
-      "initial.uid" = "65534"
-      "initial.gid" = "65534"
-      "initial.mode" = "0700"
+  dynamic "device" {
+    for_each = var.incus_metrics == null ? [] : [1]
+    content {
+      name = "secrets"
+      type = "disk"
+      properties = {
+        path     = "/var/lib/homelab-secrets"
+        pool     = var.site.storage_pool
+        source   = incus_storage_volume.workload_secrets["prometheus"].name
+        readonly = "true"
+      }
     }
   }
 }

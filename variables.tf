@@ -21,7 +21,7 @@ variable "platform_tools_directory" {
 }
 
 variable "authelia_smtp" {
-  description = "Set to use SMTP instead of the filesystem notifier. Put only nonsecret SMTP settings here; keep SMTP_PASSWORD in the private secret directory."
+  description = "Set to use SMTP instead of the filesystem notifier. Put only nonsecret SMTP settings here; store smtp_password in OpenBao."
   type = object({
     address               = string
     username              = string

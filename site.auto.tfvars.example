@@ -1,20 +1,19 @@
 # Copy to site.auto.tfvars and set values for this IncusOS installation.
-# These values reproduce the existing deployment. Preserve them when migrating
-# that deployment; choose new values only for a different installation.
+# Verify every address and interface against the new installation.
 # HCL accepts comments inside object values, so each input is documented here.
 site = {
   # Incus client alias from `incus remote list` (already authenticated).
-  incus_remote   = "IncusOS"
+  incus_remote   = "measerve"
 
-  # Existing pool from `incus storage list IncusOS:`.
+  # Existing pool from `incus storage list measerve:`.
   storage_pool   = "local"
 
-  # Existing managed bridge from `incus network list IncusOS:`. Inspect its
-  # subnet with `incus network show IncusOS:incusbr0`.
+  # Existing managed bridge from `incus network list measerve:`. Inspect its
+  # subnet with `incus network show measerve:incusbr0`.
   private_bridge = "incusbr0"
 
-  # Physical host interface connected to the LAN; inspect `incus network list
-  # IncusOS:`. The Caddy macvlan NIC attaches to this interface.
+  # Physical host interface connected to the LAN; inspect
+  # `incus network list measerve:`. The Caddy macvlan NIC attaches here.
   lan_parent     = "enp129s0"
 
   # Unique locally administered unicast MAC for Caddy's LAN NIC. Reserve a
@@ -33,7 +32,7 @@ site = {
   prometheus_ip = "10.221.180.11"
   grafana_ip    = "10.221.180.12"
 
-  # `dns.domain` from `incus network show IncusOS:incusbr0`.
+  # `dns.domain` from `incus network show measerve:incusbr0`.
   private_dns_domain = "incus"
 
   # Domain you control, with public DNS for it and auth.<base_domain> both

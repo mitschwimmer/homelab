@@ -2,9 +2,10 @@
 
 OpenTofu defines an IncusOS homelab with Caddy, Authelia, Prometheus, Grafana,
 and a private OpenBao server. OpenTofu handles instances, networking, persistent
-application data, and non-secret configuration. OpenBao holds application
-credentials. Each of Authelia, Grafana, and Prometheus runs its own OpenBao
-Agent and renders its own credentials to `/run/secrets` (tmpfs).
+application data, and non-secret destination declarations. OpenBao holds application
+credentials. A deployment command copies selected fields into private Incus
+volumes, mounted read-only at `/var/lib/homelab-secrets` in non-root OCI
+workloads. The workloads do not authenticate to OpenBao.
 
 This configuration is for a **new deployment**. It intentionally has no import
 or state migration from the previous workstation-file secret volumes.
@@ -19,10 +20,11 @@ preserve those keys separately. The workstation's old OpenTofu state does not
 describe a fresh IncusOS installation; move it out of this checkout and start
 with a new state. Do not apply the old state to the reset machine.
 
-From an authenticated Incus client, substitute your remote name and run:
+From an authenticated Incus client, substitute your remote name (here
+`measerve`) and run:
 
 ```sh
-incus admin os system factory-reset IncusOS: -d '{"wipe_existing_seeds":true}'
+incus admin os system factory-reset measerve: -d '{"wipe_existing_seeds":true}'
 ```
 
 The command prompts for confirmation and reboots the system. The explicit
@@ -30,7 +32,7 @@ The command prompts for confirmation and reboots the system. The explicit
 reinstalling applications or applying old configuration on first boot. Set up
 IncusOS and its Incus application again, authenticate a new client remote,
 and create/select a storage pool and a private managed bridge. Check their
-names with `incus storage list IncusOS:` and `incus network list IncusOS:`.
+names with `incus storage list measerve:` and `incus network list measerve:`.
 See the [IncusOS factory reset reference](https://linuxcontainers.org/incus-os/docs/main/reference/system/backup/#factory-reset).
 
 ## Prepare the workstation and site
@@ -46,9 +48,9 @@ to OpenBao or the monitoring ports is required.
 Inspect the bridge before assigning the four workload IPs:
 
 ```sh
-incus network show IncusOS:incusbr0
-incus network list-allocations IncusOS: --all-projects
-incus network list-leases IncusOS:incusbr0
+incus network show measerve:incusbr0
+incus network list-allocations measerve: --all-projects
+incus network list-leases measerve:incusbr0
 ```
 
 Pick unused addresses, ideally outside a configured DHCP range. For IncusOS
@@ -57,28 +59,29 @@ TLS endpoint and its certificate SAN; see [Incus metrics](https://linuxcontainer
 
 ## Publish a pinned OpenBao binary
 
-The server and all agents use the same pinned OpenBao 2.7.0 binary from a
-read-only Incus volume. Download the release archive and checksum/signature
+The server uses a pinned OpenBao 2.7.0 binary from a read-only Incus volume.
+Download the release archive and checksum/signature
 from [OpenBao's release](https://github.com/openbao/openbao/releases/tag/v2.7.0),
 verify the checksum and signature using the [official installation
 instructions](https://openbao.org/docs/install/), and extract `bao` into an
 **absolute versioned directory outside this checkout**. Check `bao version`.
 Use the binary matching the IncusOS CPU architecture, not necessarily the
-workstation architecture. Never replace it in place beneath running services.
+workstation architecture. Never replace it in place beneath the running server.
 
 Set `TF_VAR_platform_tools_directory` to that directory. A future upgrade
-should publish a new versioned volume and deliberately roll the server and
-agents. The OpenTofu `source_path` records the path, not the binary contents.
+should publish a new versioned volume and deliberately roll the server. The
+OpenTofu `source_path` records the path, not the binary contents.
 
 ## Provision and initialize OpenBao
 
 ```sh
 export TF_VAR_platform_tools_directory="$HOME/.local/share/homelab/openbao/2.7.0-linux-amd64"
 tofu init
-tofu plan
-tofu apply
-incus exec IncusOS:openbao -- cloud-init status --wait
-incus exec IncusOS:openbao -- systemctl status openbao
+# Bootstrap only OpenBao and the empty secret volumes. Application instances
+# are created after their files have been installed.
+tofu apply -target=incus_instance.openbao -target=incus_storage_volume.workload_secrets
+incus exec measerve:openbao -- cloud-init status --wait
+incus exec measerve:openbao -- systemctl status openbao
 ```
 
 The Debian system container creates its own private TLS key and self-signed
@@ -87,14 +90,14 @@ on its private bridge NIC. It uses single-node integrated Raft storage; this
 is **not** a highly available server. Its initial unseal requires an operator:
 
 ```sh
-incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator init -key-shares=3 -key-threshold=2'
+incus exec measerve:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator init -key-shares=3 -key-threshold=2'
 ```
 
 Store the three unseal shares and initial root token securely outside the
 checkout, the host, and OpenTofu state. Use two distinct shares to unseal:
 
 ```sh
-incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator unseal'
+incus exec measerve:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator unseal'
 ```
 
 Run the unseal command twice, entering one share at each prompt. Repeat after
@@ -104,7 +107,7 @@ workstation. In a separate terminal, tunnel the server through the authenticated
 Incus connection; this listens on **workstation loopback only**:
 
 ```sh
-incus port-forward IncusOS:openbao 8200 18200
+incus port-forward measerve:openbao 8200 18200
 ```
 
 Then, in the terminal running `bao`:
@@ -112,24 +115,28 @@ Then, in the terminal running `bao`:
 ```sh
 umask 077
 tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
-incus file pull IncusOS:openbao/var/lib/openbao/tls/server.crt "$tmp/server.crt"
+incus file pull measerve:openbao/var/lib/openbao/tls/server.crt "$tmp/server.crt"
 export BAO_ADDR=https://127.0.0.1:18200
 export BAO_CACERT="$tmp/server.crt"
-bao login
+# In a Bash shell, read the recovery token without putting it in history or
+# OpenBao's persistent token helper. Use a scoped token for later deployments.
+read -rsp 'OpenBao token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
+bao token lookup
 ```
 
 The certificate includes loopback and the private bridge IP as subject
 alternative names. Keep the tunnel and this terminal open through enrollment.
 Remove the temporary certificate copy when finished. Do not pass the root
-token in a shell argument or export it as `TF_VAR_*`.
+token in a shell argument or export it as `TF_VAR_*`. Clear `BAO_TOKEN` when
+the administrative session is over.
 
 Enable an audit file on the persistent data volume and create the KV v2 engine
-and AppRole authentication once:
+once:
 
 ```sh
 bao audit enable file file_path=/var/lib/openbao/audit.log
 bao secrets enable -path=kv -version=2 kv
-bao auth enable approle
+bao policy write deploy-secrets openbao/policies/deploy-secrets.hcl
 ```
 
 Back up the OpenBao Raft data with `bao operator raft snapshot save` to a
@@ -151,8 +158,9 @@ nix shell nixpkgs#authelia --command authelia crypto hash generate argon2
 
 Generate an RSA OIDC JWKS, HMAC key, matching Grafana OIDC client
 secret and PBKDF2 digest, Grafana secret key, and initial admin password.
-The previous README's workstation directories can serve as a **private staging
-area** for these values; OpenTofu no longer reads them. Store each field at
+A private workstation directory can serve as a temporary staging area for
+initial values; OpenTofu never reads it. Remove it after verifying the values
+in OpenBao and keep long-term recovery material in a protected backup. Store each field at
 its exact path using `bao kv put -mount=kv`, with `field=@/private/file` so
 secret bytes do not appear in a command argument. Do not print or commit them.
 
@@ -162,7 +170,6 @@ secret bytes do not appear in a command argument. Do not print or commit them.
 | `kv/authelia` | `users_yml`, `oidc_hmac_secret`, `oidc_jwks`, `grafana_client_secret_hash` | Authelia configuration and file users |
 | `kv/authelia` | `smtp_password` | Optional SMTP notifier |
 | `kv/grafana` | `client_secret`, `admin_password`, `secret_key` | Grafana's `__FILE` settings |
-| `kv/prometheus` | `agent_ready` | Set to `ready`; identity readiness marker |
 | `kv/prometheus` | `incus_server_cert`, `incus_metrics_cert`, `incus_metrics_key` | Optional Incus TLS metrics scrape |
 
 For example, `bao kv put -mount=kv authelia
@@ -189,7 +196,7 @@ To enable SMTP, set the non-secret `authelia_smtp` object in an ignored local
 `*.tfvars` file with `address`, `username`, `sender`, and
 `startup_check_address`, and add `smtp_password` to `kv/authelia`. Otherwise,
 Authelia writes enrollment links to `/data/notification.txt`; retrieve them
-privately with `incus exec IncusOS:authelia -- cat /data/notification.txt`.
+privately with `incus exec measerve:authelia -- cat /data/notification.txt`.
 Use `submission://host:587` for STARTTLS or `submissions://host:465` for
 implicit TLS. An SMTP configuration change recreates Authelia but preserves
 its data volume.
@@ -204,103 +211,94 @@ register the public certificate:
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 \
   -keyout /private/INCUS_METRICS_KEY -nodes \
   -out /private/INCUS_METRICS_CERT -days 3650 -subj /CN=homelab-metrics
-incus config trust add-certificate IncusOS: \
+incus config trust add-certificate measerve: \
   /private/INCUS_METRICS_CERT --type=metrics
 ```
 
 Prometheus and Grafana's data volumes stay persistent. Extra exporters can be
 listed in `prometheus_extra_targets` once reachable on the private network.
 
-## Enroll each workload
+## Deploy secret files and application instances
 
-### Why the OCI workloads have a launcher
-
-Authelia, Grafana, and Prometheus use upstream OCI images without systemd.
-Their OpenBao Agent must authenticate and render files before the application
-starts. The mounted `openbao/start-oci.sh` is the instance's PID 1: it starts
-Agent, waits for the required files in tmpfs, starts the image's original
-application command, forwards termination, and stops the application if Agent
-exits. It contains no credentials and is shared read-only with the pinned
-`bao` binary.
-
-The alternative with the fewest moving parts inside each OCI instance is
-OpenBao Agent's `exec` process supervisor. OpenBao 2.7 still marks it public
-beta, and it cannot be combined with the file templates used here. Using it
-would require changing the applications to receive secrets through environment
-variables. Another option is rebuilding the three upstream images with a
-general-purpose supervisor. System containers with systemd would also avoid
-this launcher, but would change how these upstream applications are packaged
-and updated. Revisit the choice if file templates become compatible with a
-stable Agent supervisor.
-
-OpenTofu contains only policy names, KV paths, and file destinations. Apply
-these narrow policies directly to OpenBao, outside OpenTofu:
+For routine deployments, issue a short-lived token limited to the
+`deploy-secrets` policy. After populating KV, while authenticated as the
+bootstrap administrator, run:
 
 ```sh
-bao policy write authelia openbao/policies/authelia.hcl
-bao policy write grafana openbao/policies/grafana.hcl
-bao policy write prometheus openbao/policies/prometheus.hcl
+bao token create -policy=deploy-secrets -ttl=1h -no-default-policy
+unset BAO_TOKEN
+read -rsp 'Deployment token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
 ```
 
-For each of `authelia`, `grafana`, and `prometheus`, configure one AppRole,
-create its role ID and SecretID, and deliver them **directly** into that
-workload's dedicated protected Incus volume. Substitute the workload name,
-UID, remote, and pool in the example. The UIDs are `0`, `472`, and `65534`
-respectively:
+Enter the token printed by the first command at the prompt. The initial root
+token is for bootstrap and emergency recovery. Issue a new scoped token for
+later deployments; keep it out of tfvars files and command arguments.
+
+The `secret_deployment` OpenTofu output maps destination filenames to KV fields
+and lists the Incus
+volume names, and numeric file owners. Inspect it with
+`tofu output -json secret_deployment`; it contains no secret values. The
+private volumes are owned by the application UID and mode `0700`; the
+individual files are mode `0400`. Authelia runs as UID/GID 1000, Grafana as
+UID 472/GID 0, and Prometheus as UID/GID 65534. The secret mounts inside
+the containers are read-only.
+
+Once the KV records above exist, keep the authenticated `bao` terminal and
+loopback tunnel open, then run from this repository:
 
 ```sh
-service=authelia
-uid=0
-remote=IncusOS
-pool=local
-bao write "auth/approle/role/$service" "token_policies=$service" \
-  token_no_default_policy=true token_ttl=1h token_max_ttl=4h \
-  secret_id_num_uses=0 secret_id_ttl=0
-umask 077
-tmp=$(mktemp -d /dev/shm/openbao-enroll.XXXXXX)
-bao read -field=role_id "auth/approle/role/$service/role-id" > "$tmp/role-id"
-bao write -field=secret_id -f "auth/approle/role/$service/secret-id" > "$tmp/secret-id"
-incus file pull "$remote:openbao/var/lib/openbao/tls/server.crt" "$tmp/server.crt"
-for file in role-id secret-id server.crt; do
-  incus storage volume file push "$tmp/$file" "$remote:$pool" \
-    "$service-openbao-auth/$file" --uid="$uid" --gid="$uid" --mode=0400
-done
-rm -rf "$tmp"
+python3 scripts/deploy-secrets.py
+# With all required files already present, create the remaining instances.
+tofu plan
+tofu apply
 ```
 
-Restart the three instances after enrollment so each Agent loads its new
-credential and CA; a failed first boot can exhaust Incus's restart attempts:
+The command invokes `bao kv get -field=...` and pipes its result to
+`incus storage volume file push` through process memory. It does not print
+values or write workstation files. The `bao` CLI authenticates using your
+operator session; it needs read access to the three KV keys. A failed read
+stops before writing that service's files. A failed push stops deployment;
+check the affected service before starting or restarting it. Re-run the
+command safely after correcting the issue. No secret bytes enter OpenTofu
+input, plan, output, or state. Treat the Incus control plane and backups of
+these volumes as trusted secret storage.
+
+To deploy just one service after updating its KV record, then restart it so
+it reads the new values:
 
 ```sh
-incus restart IncusOS:authelia
-incus restart IncusOS:grafana
-incus restart IncusOS:prometheus
+python3 scripts/deploy-secrets.py authelia
+incus restart measerve:authelia
 ```
 
-Never pass a SecretID through HCL, Incus instance config, `user.*`, or
-cloud-init. The `secret-id` persists in the individual auth volume so Agent
-can authenticate after a reboot. It is a long-lived bootstrap credential:
-back up and protect it as such, revoke it when an instance is retired, and
-issue a new one for replacement. The Agent token and application secrets
-stay only in tmpfs. At startup the wrapper waits for every required file;
-if Agent fails, it stops the application and Incus retries the instance.
+If a newly created OCI instance is stopped, use `incus start` instead. For
+optional authenticated Incus metrics, set `incus_metrics` in your local
+`*.tfvars`, put the three Prometheus fields in OpenBao, apply the storage
+volume first, deploy `prometheus`, and apply the full configuration:
 
-The AppRole policy permits exactly one `kv/data/<service>` path. Confirm an
-allowed read and a denied cross-service read with a test token. A leaked
-SecretID must be revoked via the AppRole SecretID accessor; rotate the
-application secrets separately. The server must be unsealed before clients
-can acquire new tokens; they retry while it is unavailable.
+```sh
+tofu apply -target='incus_storage_volume.workload_secrets["prometheus"]'
+python3 scripts/deploy-secrets.py prometheus
+tofu apply
+```
+
+Targeted applies above are only for first-boot ordering. Run a normal
+`tofu plan` and `tofu apply` afterward to reconcile the full configuration.
+If the application field list changes, update the KV record and redeploy its
+files before restarting the service. Removing a field from the manifest does
+not delete its old file automatically; remove obsolete secret files manually
+from their Incus volume after confirming the application no longer needs them.
 
 ## Verify and operate
 
-After enrollment, inspect `incus list IncusOS:` and the workload logs.
-Confirm `/run/secrets` is a tmpfs, files are owned by the service UID and
-mode `0400`, and only its own fields are present. Check that the application
-starts, then restart each instance to test reacquisition. Stop OpenBao,
-restart a workload, bring OpenBao back and unseal it: the application should
-start after Agent succeeds. Restart each application after changing a KV v2
-value to make it consume the new file. Authelia watches `users.yml` itself;
-other application configuration and key changes require a deliberate restart.
+Inspect `incus list measerve:` and the workload logs. Verify the application
+runs under its declared non-root UID, the volume directory has mode `0700`,
+and only its intended files exist with UID/GID and mode `0400`. Check from
+within each container that the app can read its own secret files. Reboot the
+host and verify the files survive and workloads start without OpenBao being
+available. Rotate one test field in OpenBao, redeploy it, restart the service,
+and verify it consumes the new value. Authelia watches `users.yml` itself;
+for other changes, use an explicit restart.
 
 Caddy serves `https://grafana.<base_domain>` through Authelia forward auth.
 Grafana additionally requires Authelia OIDC membership in `admins` and grants
@@ -310,9 +308,11 @@ Explore, query `up` and inspect the configured Prometheus targets. Ensure
 private bridge DNS resolves `caddy.<private_dns_domain>`; Grafana must also
 reach the public `auth.<base_domain>` URL for OIDC callbacks.
 
-Keep OpenTofu plan/state, OpenBao snapshots, the unseal shares, and bootstrap
-credentials private. Search a saved **canary** secret after apply in raw
+Keep OpenTofu plan/state, OpenBao snapshots, unseal shares, and Incus secret
+volume backups private. Search a saved **canary** secret after apply in raw
 state, `tofu show -json`, Incus instance configuration, and provisioning logs;
-it must not be there. Caddy's ACME data, application databases, Prometheus
-series, and OpenBao Raft data are persistent and require separate backups.
+it must not be there. The canary intentionally appears in its Incus volume.
+Caddy ACME data, application databases, Prometheus series, secret volumes,
+and OpenBao Raft data require backups. A snapshot can retain older secret
+values after rotation, so protect and expire backups deliberately.
 Committing this repository does not deploy anything.

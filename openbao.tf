@@ -5,7 +5,7 @@ locals {
 }
 
 # A versioned, operator-verified binary is copied into this non-secret volume.
-# Changing platform_tools_directory to a new versioned path is an explicit upgrade.
+# Only the OpenBao server uses it; workloads do not contain OpenBao clients.
 resource "incus_storage_volume" "platform_tools" {
   name   = "platform-tools-openbao-2-7-0"
   pool   = var.site.storage_pool
@@ -17,11 +17,6 @@ resource "incus_storage_volume" "platform_tools" {
     mode        = "0755"
   }
 
-  file {
-    source_path = "${path.module}/openbao/start-oci.sh"
-    target_path = "/start-oci.sh"
-    mode        = "0755"
-  }
 }
 
 resource "incus_storage_volume" "openbao_config" {
