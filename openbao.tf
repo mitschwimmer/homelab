@@ -4,21 +4,6 @@ locals {
   })
 }
 
-# A versioned, operator-verified binary is copied into this non-secret volume.
-# Only the OpenBao server uses it; workloads do not contain OpenBao clients.
-resource "incus_storage_volume" "platform_tools" {
-  name   = "platform-tools-openbao-2-7-0"
-  pool   = var.site.storage_pool
-  remote = var.site.incus_remote
-
-  file {
-    source_path = "${var.platform_tools_directory}/bao"
-    target_path = "/bao"
-    mode        = "0755"
-  }
-
-}
-
 resource "incus_storage_volume" "openbao_config" {
   name   = "openbao-config"
   pool   = var.site.storage_pool
@@ -44,16 +29,18 @@ resource "incus_storage_volume" "openbao_data" {
 
 resource "incus_instance" "openbao" {
   name     = "openbao"
-  image    = "images:debian/13/cloud"
+  image    = "oci-docker:openbao/openbao:2.7.0"
   remote   = var.site.incus_remote
   profiles = []
 
   config = {
     "boot.autostart"          = "true"
     "boot.autostart.priority" = "20"
-    "cloud-init.user-data" = templatefile("${path.module}/openbao/cloud-init.yml.tftpl", {
-      openbao_ip = var.site.openbao_ip
-    })
+    "boot.autorestart"        = "true"
+    # Override the upstream image's development-mode CMD with a production server.
+    "oci.entrypoint" = "/usr/bin/bao server -config=/etc/openbao/server.hcl"
+    "oci.uid"        = "900"
+    "oci.gid"        = "900"
   }
 
   device {
@@ -71,17 +58,6 @@ resource "incus_instance" "openbao" {
     properties = {
       network        = var.site.private_bridge
       "ipv4.address" = var.site.openbao_ip
-    }
-  }
-
-  device {
-    name = "tools"
-    type = "disk"
-    properties = {
-      path     = "/opt/platform"
-      pool     = var.site.storage_pool
-      source   = incus_storage_volume.platform_tools.name
-      readonly = "true"
     }
   }
 

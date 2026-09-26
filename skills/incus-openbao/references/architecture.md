@@ -13,3 +13,9 @@ A path such as `kv/authelia` and field name `smtp_password` is non-secret config
 On first install, provision OpenBao and empty private volumes, initialize and populate OpenBao, copy fields, then create/start OCI workloads. If a secret volume is lost, restore it from protected backup or recopy all fields before starting the app. Host reboot needs no OpenBao access for already installed files. On KV rotation, copy the affected workload's complete field set and restart/reload it after successful transfer. Do not assume a KV update propagates automatically. Protect snapshots and backups retaining old versions.
 
 For dynamic/leased credentials, mutually untrusted administrators, or a stronger separation from Incus persistence, explicitly choose a runtime model: individual workload identity, narrow policy, bootstrap outside state, Agent or client, renewal, and startup/outage handling. This is an exception requiring a distinct threat model.
+
+## OpenBao server and host loss
+
+Run a single-node server from a version-pinned official OCI image with an explicit `bao server -config=...` command; upstream image defaults may start dev mode. Mount a private persistent Raft/TLS volume writable by its non-root UID and read-only non-secret HCL config. Provision TLS outside OpenTofu before first start. Retain the TLS key and original unseal shares with restored Raft data; do not initialize or regenerate keys on recovery.
+
+IncusOS system backups exclude installed application data. Preserve system backup/pool encryption keys, Incus application backup, exported volumes and instances, OpenBao Raft snapshots, TLS/unseal material, and OpenTofu state off-host. Restore/import before applying configuration and inspect the plan for volume replacement. A factory reset erases the main drive; drive wiping is a separate destructive operation, never a generic certificate or pool troubleshooting step.

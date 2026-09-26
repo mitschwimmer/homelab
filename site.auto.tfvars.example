@@ -25,7 +25,7 @@ site = {
   # See the README for the allocation and DHCP lease checks before choosing.
   authelia_ip    = "10.221.180.10"
 
-  # Free address on the same private bridge for the OpenBao system container.
+  # Free address on the same private bridge for the OpenBao OCI container.
   openbao_ip     = "10.221.180.13"
 
   # Reserve two more unused IPv4 addresses on the private bridge, as above.

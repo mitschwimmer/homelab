@@ -18,6 +18,8 @@ Use OpenBao as the authoritative secret store for a trusted Incus host. Default 
 7. Keep OpenBao storage, unseal/recovery, and emergency administration independent of OpenBao-hosted secrets and routine Authelia/OIDC access.
 8. Authenticate the deployment operator/CI to OpenBao with a scoped credential that is not committed or fed through OpenTofu state. Restrict Incus administration separately.
 9. Inspect provider and application versions before relying on exact syntax or file-secret support. Use current upstream docs for version-sensitive details.
+10. For a single-node OpenBao server on IncusOS, prefer a pinned official OCI image with an explicit production command, persistent Raft/TLS volume, and TLS provisioned outside OpenTofu state. Never run the image's default dev command or regenerate TLS over a restored volume.
+11. Treat host recovery as a separate design requirement: back up IncusOS system configuration and pool keys, Incus application state, custom volumes, OpenBao Raft/TLS/unseal material, and OpenTofu state independently. Diagnose client TLS/pool problems before any reset or drive wipe.
 
 ## Repository workflow
 

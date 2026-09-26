@@ -1,23 +1,18 @@
 variable "site" {
   description = "Installation-specific IncusOS, LAN and domain settings. Use a local site.auto.tfvars; see site.auto.tfvars.example."
   type = object({
-    incus_remote    = string
-    storage_pool    = string
-    private_bridge  = string
-    lan_parent      = string
-    caddy_mac       = string
-    authelia_ip     = string
-    openbao_ip      = string
-    prometheus_ip   = string
-    grafana_ip      = string
+    incus_remote       = string
+    storage_pool       = string
+    private_bridge     = string
+    lan_parent         = string
+    caddy_mac          = string
+    authelia_ip        = string
+    openbao_ip         = string
+    prometheus_ip      = string
+    grafana_ip         = string
     private_dns_domain = string
-    base_domain     = string
+    base_domain        = string
   })
-}
-
-variable "platform_tools_directory" {
-  description = "Absolute path to a verified, pinned OpenBao binary outside the checkout. Contains bao."
-  type        = string
 }
 
 variable "authelia_smtp" {
