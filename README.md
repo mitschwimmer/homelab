@@ -1,27 +1,49 @@
 # Homelab
 
-OpenTofu definitions for the IncusOS homelab: Caddy serves public HTTPS and
-consults Authelia over the private Incus bridge for protected routes.
+OpenTofu defines an IncusOS homelab with Caddy, Authelia, Prometheus, Grafana,
+and a private OpenBao server. OpenTofu handles instances, networking, persistent
+application data, and non-secret configuration. OpenBao holds application
+credentials. Each of Authelia, Grafana, and Prometheus runs its own OpenBao
+Agent and renders its own credentials to `/run/secrets` (tmpfs).
 
-The [Caddy and Authelia architecture decision](docs/adr/0001-caddy-and-authelia.md)
-records the reasons for this arrangement and its tradeoffs.
+This configuration is for a **new deployment**. It intentionally has no import
+or state migration from the previous workstation-file secret volumes.
 
-## Prerequisites
+## Reset an existing IncusOS installation
 
-Use a workstation with OpenTofu and an authenticated Incus client remote.
-Copy `site.auto.tfvars.example` to `site.auto.tfvars` and adjust its `site`
-values for your installation. The example contains the values of the original
-deployment, so copying it unchanged preserves those settings. The local file
-is ignored by Git. The specified storage pool and private bridge must already
-exist; the provider references them but does not create them. The example
-file documents how to identify each value. For an existing deployment, add
-`prometheus_ip`, `grafana_ip`, and `private_dns_domain` to the local site file;
-choose unused private bridge addresses for the first two. The provider defines the public
-Docker Hub image remote in HCL and uses your existing Incus client authentication.
+A reset is destructive: it erases the main system drive, including installed
+applications, their data and configuration, and system-level state. IncusOS
+says user-created storage pools are not wiped, but cannot be imported after
+reboot without their encryption keys. Make any backups you need first, and
+preserve those keys separately. The workstation's old OpenTofu state does not
+describe a fresh IncusOS installation; move it out of this checkout and start
+with a new state. Do not apply the old state to the reset machine.
 
-Before choosing `authelia_ip` for a new deployment, inspect the bridge's
-`ipv4.address` and any `ipv4.dhcp.ranges`, then check its allocations and
-DHCP leases (substitute your remote and bridge names):
+From an authenticated Incus client, substitute your remote name and run:
+
+```sh
+incus admin os system factory-reset IncusOS: -d '{"wipe_existing_seeds":true}'
+```
+
+The command prompts for confirmation and reboots the system. The explicit
+`wipe_existing_seeds` prevents an existing installation seed from
+reinstalling applications or applying old configuration on first boot. Set up
+IncusOS and its Incus application again, authenticate a new client remote,
+and create/select a storage pool and a private managed bridge. Check their
+names with `incus storage list IncusOS:` and `incus network list IncusOS:`.
+See the [IncusOS factory reset reference](https://linuxcontainers.org/incus-os/docs/main/reference/system/backup/#factory-reset).
+
+## Prepare the workstation and site
+
+Install OpenTofu, the Incus client, OpenBao CLI, OpenSSL, and GnuPG. Copy
+`site.auto.tfvars.example` to ignored `site.auto.tfvars` and set every value.
+The example describes the original host; verify its parent NIC, MAC, bridge
+subnet, addresses, storage pool, domain, and DNS before using it. Reserve a
+LAN address for Caddy's macvlan MAC and forward public HTTP/HTTPS to it.
+Configure public DNS for the base domain, `auth`, and `grafana`. No public route
+to OpenBao or the monitoring ports is required.
+
+Inspect the bridge before assigning the four workload IPs:
 
 ```sh
 incus network show IncusOS:incusbr0
@@ -29,104 +51,129 @@ incus network list-allocations IncusOS: --all-projects
 incus network list-leases IncusOS:incusbr0
 ```
 
-Pick an address inside the bridge subnet that is neither the gateway nor
-already allocated or leased. Prefer one outside the dynamic DHCP range when
-that range is explicitly configured. An address absent from those lists can
-still be used by an offline device with a manually set IP, so also check any
-static address assignments you maintain separately. If migrating the existing
-deployment, retain its current `authelia_ip` rather than selecting a new one.
+Pick unused addresses, ideally outside a configured DHCP range. For IncusOS
+metrics, the optional `incus_metrics` site variable names the authenticated
+TLS endpoint and its certificate SAN; see [Incus metrics](https://linuxcontainers.org/incus/docs/main/metrics/).
 
-Caddy has a macvlan NIC on `lan_parent` with `caddy_mac`, plus an internal NIC
-on `private_bridge`. Reserve a LAN address for that MAC in your router's DHCP
-configuration, then forward public HTTP and HTTPS traffic to the reserved
-address. OpenTofu does not configure the router, public DNS, or Caddy's LAN IP.
-The host cannot directly reach its own macvlan instance; the private bridge
-provides an internal connection. Authelia uses `authelia_ip` on that bridge;
-Caddy uses the same address as its upstream. Point DNS for `base_domain` and
-`auth.<base_domain>` to your public address before testing browser login.
+## Publish a pinned OpenBao binary
 
-For the existing deployment, the router reserves `192.168.1.200` for the MAC
-in the example site file; the existing private bridge uses `10.221.180.0/24`.
-When moving to another installation, use its own bridge subnet, interface,
-DHCP reservation, DNS records, and port forwards. Keep a separate OpenTofu
-state for each installation.
+The server and all agents use the same pinned OpenBao 2.7.0 binary from a
+read-only Incus volume. Download the release archive and checksum/signature
+from [OpenBao's release](https://github.com/openbao/openbao/releases/tag/v2.7.0),
+verify the checksum and signature using the [official installation
+instructions](https://openbao.org/docs/install/), and extract `bao` into an
+**absolute versioned directory outside this checkout**. Check `bao version`.
+Use the binary matching the IncusOS CPU architecture, not necessarily the
+workstation architecture. Never replace it in place beneath running services.
 
-## Prepare Authelia identity data
+Set `TF_VAR_platform_tools_directory` to that directory. A future upgrade
+should publish a new versioned volume and deliberately roll the server and
+agents. The OpenTofu `source_path` records the path, not the binary contents.
 
-Keep these files **outside the Git checkout** in a private directory on the
-workstation that runs OpenTofu. For example:
+## Provision and initialize OpenBao
+
+```sh
+export TF_VAR_platform_tools_directory="$HOME/.local/share/homelab/openbao/2.7.0-linux-amd64"
+tofu init
+tofu plan
+tofu apply
+incus exec IncusOS:openbao -- cloud-init status --wait
+incus exec IncusOS:openbao -- systemctl status openbao
+```
+
+The Debian system container creates its own private TLS key and self-signed
+server certificate on the persistent `openbao-data` volume. It listens only
+on its private bridge NIC. It uses single-node integrated Raft storage; this
+is **not** a highly available server. Its initial unseal requires an operator:
+
+```sh
+incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator init -key-shares=3 -key-threshold=2'
+```
+
+Store the three unseal shares and initial root token securely outside the
+checkout, the host, and OpenTofu state. Use two distinct shares to unseal:
+
+```sh
+incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator unseal'
+```
+
+Run the unseal command twice, entering one share at each prompt. Repeat after
+an OpenBao server reboot. This recovery path does not depend on Authelia.
+Retrieve the public CA certificate into a private temporary directory on the
+workstation. In a separate terminal, tunnel the server through the authenticated
+Incus connection; this listens on **workstation loopback only**:
+
+```sh
+incus port-forward IncusOS:openbao 8200 18200
+```
+
+Then, in the terminal running `bao`:
 
 ```sh
 umask 077
-mkdir -p "$HOME/.config/homelab/authelia/v1"
-openssl rand -hex 32 > "$HOME/.config/homelab/authelia/v1/SESSION_SECRET"
-openssl rand -hex 32 > "$HOME/.config/homelab/authelia/v1/STORAGE_ENCRYPTION_KEY"
-openssl rand -hex 32 > "$HOME/.config/homelab/authelia/v1/RESET_PASSWORD_JWT_SECRET"
-cp authelia/users.yml.example "$HOME/.config/homelab/authelia/v1/users.yml"
+tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
+incus file pull IncusOS:openbao/var/lib/openbao/tls/server.crt "$tmp/server.crt"
+export BAO_ADDR=https://127.0.0.1:18200
+export BAO_CACERT="$tmp/server.crt"
+bao login
 ```
 
-Generate the password hash **before deploying the service**. On your NixOS
-workstation, open a temporary shell with the Authelia CLI and enter the
-password at the interactive prompt:
+The certificate includes loopback and the private bridge IP as subject
+alternative names. Keep the tunnel and this terminal open through enrollment.
+Remove the temporary certificate copy when finished. Do not pass the root
+token in a shell argument or export it as `TF_VAR_*`.
+
+Enable an audit file on the persistent data volume and create the KV v2 engine
+and AppRole authentication once:
+
+```sh
+bao audit enable file file_path=/var/lib/openbao/audit.log
+bao secrets enable -path=kv -version=2 kv
+bao auth enable approle
+```
+
+Back up the OpenBao Raft data with `bao operator raft snapshot save` to a
+private, off-host location. Protect the snapshot and unseal shares, and test
+restoration. Preserve the server TLS key/certificate or reenroll all clients
+with the restored server CA. Do not reset OpenBao just to rotate a workload
+credential.
+
+## Store application secrets
+
+Create the Authelia session, storage encryption, and reset-password keys with
+`openssl rand -hex 32`. Prepare `authelia/users.yml.example` privately and
+replace its example hash with an Argon2 hash generated by the interactive
+Authelia CLI:
 
 ```sh
 nix shell nixpkgs#authelia --command authelia crypto hash generate argon2
 ```
 
-Alternatively, if you have Docker, run the declared image version once:
+Generate an RSA OIDC JWKS, HMAC key, matching Grafana OIDC client
+secret and PBKDF2 digest, Grafana secret key, and initial admin password.
+The previous README's workstation directories can serve as a **private staging
+area** for these values; OpenTofu no longer reads them. Store each field at
+its exact path using `bao kv put -mount=kv`, with `field=@/private/file` so
+secret bytes do not appear in a command argument. Do not print or commit them.
 
-```sh
-docker run --rm -it authelia/authelia:4.39.28 authelia crypto hash generate argon2
-```
+| KV v2 key | Field | Source and consumer |
+| --- | --- | --- |
+| `kv/authelia` | `session_secret`, `storage_encryption_key`, `reset_password_jwt_secret` | Authelia's three `*_FILE` settings |
+| `kv/authelia` | `users_yml`, `oidc_hmac_secret`, `oidc_jwks`, `grafana_client_secret_hash` | Authelia configuration and file users |
+| `kv/authelia` | `smtp_password` | Optional SMTP notifier |
+| `kv/grafana` | `client_secret`, `admin_password`, `secret_key` | Grafana's `__FILE` settings |
+| `kv/prometheus` | `agent_ready` | Set to `ready`; identity readiness marker |
+| `kv/prometheus` | `incus_server_cert`, `incus_metrics_cert`, `incus_metrics_key` | Optional Incus TLS metrics scrape |
 
-Copy only the value after `Digest:` (beginning with `$argon2id$`) into the
-single-quoted `password` value in the private `users.yml`, and replace the
-example email with your real address. Keep the password out of command-line
-arguments and shell history. The example hash and address cannot be used for
-login. Back up the three keys and the user file privately.
+For example, `bao kv put -mount=kv authelia
+session_secret=@/private/SESSION_SECRET ...` creates the Authelia record;
+include **all its fields in one write**, because `kv put` replaces the current
+version. Use `bao kv patch` to alter a single field later. Preserve the OIDC
+signing key and Authelia storage encryption key for database recovery. The
+Grafana client secret's plaintext goes to `kv/grafana` and its **matching
+PBKDF2 hash** goes to `kv/authelia`.
 
-The provider's `source_path` inputs read these files during `tofu apply`.
-OpenTofu state holds the local paths but not their contents. On rotation, use
-a new versioned directory, change `TF_VAR_authelia_secret_directory` and
-apply; changing bytes at the same path alone does not trigger a re-upload.
-
-## Prepare monitoring
-
-Prometheus and Grafana each run as an OCI instance on the private Incus bridge.
-Prometheus keeps its time series on a persistent volume and provisions Grafana's
-Prometheus data source. Caddy serves `https://grafana.<base_domain>` and asks
-Authelia to allow only members of the `admins` group with two factor
-authentication. Grafana also uses Authelia OpenID Connect, independently checks
-membership in `admins`, and grants those users the Grafana server administrator
-role. Prometheus and the application metrics ports are not routed publicly.
-
-Choose free `prometheus_ip` and `grafana_ip` values using the bridge checks
-above. The existing example proposes `10.221.180.11` and `10.221.180.12`;
-check them before applying. Ensure the private bridge resolves
-`caddy.<private_dns_domain>` to Caddy's bridge NIC. If your bridge has a
-different `dns.domain`, set `private_dns_domain` accordingly. Create a public
-DNS record for `grafana.<base_domain>` pointing to the same address as Caddy.
-The router only needs its existing HTTP and HTTPS forwards.
-
-Your **private**, existing Authelia `users.yml` must list `admins` under
-`groups` for each person who should administer Grafana. The example already
-uses this name; no change is needed if your private file also uses it.
-
-Create another private directory **outside this checkout** and generate the
-OIDC signing key, HMAC secret, Grafana encryption key, and bootstrap password:
-
-```sh
-umask 077
-mkdir -p "$HOME/.config/homelab/monitoring/v1"
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
-  -out "$HOME/.config/homelab/monitoring/v1/OIDC_JWKS"
-openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/OIDC_HMAC_SECRET"
-openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_SECRET_KEY"
-openssl rand -hex 32 > "$HOME/.config/homelab/monitoring/v1/GRAFANA_ADMIN_PASSWORD"
-```
-
-Generate one client secret and its PBKDF2 digest using the declared Authelia
-image (Docker example; the same CLI can run from a local installation):
+The declared Authelia image can generate the matching client secret and hash:
 
 ```sh
 docker run --rm authelia/authelia:4.39.28 \
@@ -134,142 +181,138 @@ docker run --rm authelia/authelia:4.39.28 \
   --random --random.length 72 --random.charset rfc3986
 ```
 
-Store the printed plaintext secret, without a label or trailing spaces, in
-`GRAFANA_CLIENT_SECRET` in that private directory and the printed digest in
-`GRAFANA_CLIENT_SECRET_HASH`. These **must match**. Keep both out of shell
-history and Git. The digest is loaded by Authelia from its secret volume at
-startup; Grafana reads the plaintext using its `__FILE` setting. Back up this
-directory and the Grafana data volume privately. Preserve the OIDC signing key
-and Grafana encryption key across instance replacements.
+Store the printed plaintext and digest privately before uploading them to
+their separate OpenBao fields. Keep both out of shell history. Ensure each
+person who should administer Grafana has `admins` in their `users.yml` groups.
 
-By default Prometheus scrapes itself, Caddy, Authelia, and Grafana. IncusOS
-instance and host metrics require a separate authenticated TLS connection.
-To add it, first check whether your authenticated Incus remote already exposes
-`/1.0/metrics` on its HTTPS address. Otherwise, configure the server's
-`core.metrics_address` on a reachable internal address (see the [Incus metrics
-guide](https://linuxcontainers.org/incus/docs/main/metrics/)). Create a metrics
-certificate and register it as **type metrics**, not a general client:
+To enable SMTP, set the non-secret `authelia_smtp` object in an ignored local
+`*.tfvars` file with `address`, `username`, `sender`, and
+`startup_check_address`, and add `smtp_password` to `kv/authelia`. Otherwise,
+Authelia writes enrollment links to `/data/notification.txt`; retrieve them
+privately with `incus exec IncusOS:authelia -- cat /data/notification.txt`.
+Use `submission://host:587` for STARTTLS or `submissions://host:465` for
+implicit TLS. An SMTP configuration change recreates Authelia but preserves
+its data volume.
+
+For authenticated Incus metrics, register the metrics certificate with Incus
+as **type metrics**, store its private key and the trusted Incus server
+certificate in `kv/prometheus`, and then set `incus_metrics` in local tfvars.
+For example, generate a separate key/certificate pair in private staging and
+register the public certificate:
 
 ```sh
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 \
-  -keyout "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_KEY" -nodes \
-  -out "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_CERT" -days 3650 \
-  -subj "/CN=homelab-metrics"
+  -keyout /private/INCUS_METRICS_KEY -nodes \
+  -out /private/INCUS_METRICS_CERT -days 3650 -subj /CN=homelab-metrics
 incus config trust add-certificate IncusOS: \
-  "$HOME/.config/homelab/monitoring/v1/INCUS_METRICS_CERT" --type=metrics
+  /private/INCUS_METRICS_CERT --type=metrics
 ```
 
-Copy the Incus server certificate already trusted by the Incus client to
-`INCUS_SERVER_CERT` in that private directory (commonly
-`$HOME/.config/incus/servercerts/IncusOS.crt`). Check its subject alternative
-names with `openssl x509 -in INCUS_SERVER_CERT -noout -text` to select
-`incus_metrics.server_name`. Add `incus_metrics` with its reachable host:port
-to `site.auto.tfvars`, as shown in the example. TLS server verification and
-client certificate authentication remain enabled. If IncusOS already exposes
-the HTTPS API to your workstation, do not open a second listener just for this.
+Prometheus and Grafana's data volumes stay persistent. Extra exporters can be
+listed in `prometheus_extra_targets` once reachable on the private network.
 
-Later, after enabling `IMMICH_TELEMETRY_INCLUDE=all` in an Immich deployment,
-add its API and microservices `:8081` and `:8082` exporters through
-`prometheus_extra_targets`; the example site file shows both jobs. Add other
-private HTTP exporters the same way. Do not add targets until they exist.
+## Enroll each workload
 
-## Apply
+### Why the OCI workloads have a launcher
 
-From the repository root, on the authenticated workstation:
+Authelia, Grafana, and Prometheus use upstream OCI images without systemd.
+Their OpenBao Agent must authenticate and render files before the application
+starts. The mounted `openbao/start-oci.sh` is the instance's PID 1: it starts
+Agent, waits for the required files in tmpfs, starts the image's original
+application command, forwards termination, and stops the application if Agent
+exits. It contains no credentials and is shared read-only with the pinned
+`bao` binary.
+
+The alternative with the fewest moving parts inside each OCI instance is
+OpenBao Agent's `exec` process supervisor. OpenBao 2.7 still marks it public
+beta, and it cannot be combined with the file templates used here. Using it
+would require changing the applications to receive secrets through environment
+variables. Another option is rebuilding the three upstream images with a
+general-purpose supervisor. System containers with systemd would also avoid
+this launcher, but would change how these upstream applications are packaged
+and updated. Revisit the choice if file templates become compatible with a
+stable Agent supervisor.
+
+OpenTofu contains only policy names, KV paths, and file destinations. Apply
+these narrow policies directly to OpenBao, outside OpenTofu:
 
 ```sh
-test -e site.auto.tfvars || cp site.auto.tfvars.example site.auto.tfvars
-# Review the site values; preserve any existing local settings.
-export TF_VAR_authelia_secret_directory="$HOME/.config/homelab/authelia/v1"
-export TF_VAR_monitoring_secret_directory="$HOME/.config/homelab/monitoring/v1"
-tofu init
-tofu plan
-tofu apply
+bao policy write authelia openbao/policies/authelia.hcl
+bao policy write grafana openbao/policies/grafana.hcl
+bao policy write prometheus openbao/policies/prometheus.hcl
 ```
 
-For an existing deployment, preserve its original site values and inspect
-`tofu plan` before applying. This addition creates Prometheus and Grafana,
-updates Caddy's configuration, and replaces the Authelia instance to enable
-metrics and OIDC while retaining its data and secrets volumes. The plan should
-not replace Caddy or destroy existing data volumes. On another IncusOS
-installation, use a separate state and site file. Do not commit either.
-
-Check both services and the public endpoints:
+For each of `authelia`, `grafana`, and `prometheus`, configure one AppRole,
+create its role ID and SecretID, and deliver them **directly** into that
+workload's dedicated protected Incus volume. Substitute the workload name,
+UID, remote, and pool in the example. The UIDs are `0`, `472`, and `65534`
+respectively:
 
 ```sh
-INCUS_REMOTE=IncusOS # use the remote in your site file
-BASE_DOMAIN=mitschwimmer.de # use the domain in your site file
-CADDY_LAN_IP=192.168.1.200 # use your router's DHCP reservation
-incus list "$INCUS_REMOTE:"
-curl --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/health"
-curl --resolve "auth.$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://auth.$BASE_DOMAIN/api/health"
-curl -I --resolve "$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://$BASE_DOMAIN/private"
-curl -I --resolve "grafana.$BASE_DOMAIN:443:$CADDY_LAN_IP" "https://grafana.$BASE_DOMAIN/"
+service=authelia
+uid=0
+remote=IncusOS
+pool=local
+bao write "auth/approle/role/$service" "token_policies=$service" \
+  token_no_default_policy=true token_ttl=1h token_max_ttl=4h \
+  secret_id_num_uses=0 secret_id_ttl=0
+umask 077
+tmp=$(mktemp -d /dev/shm/openbao-enroll.XXXXXX)
+bao read -field=role_id "auth/approle/role/$service/role-id" > "$tmp/role-id"
+bao write -field=secret_id -f "auth/approle/role/$service/secret-id" > "$tmp/secret-id"
+incus file pull "$remote:openbao/var/lib/openbao/tls/server.crt" "$tmp/server.crt"
+for file in role-id secret-id server.crt; do
+  incus storage volume file push "$tmp/$file" "$remote:$pool" \
+    "$service-openbao-auth/$file" --uid="$uid" --gid="$uid" --mode=0400
+done
+rm -rf "$tmp"
 ```
 
-Check `incus list "$INCUS_REMOTE:"` for Prometheus and Grafana and validate
-the configuration with:
+Restart the three instances after enrollment so each Agent loads its new
+credential and CA; a failed first boot can exhaust Incus's restart attempts:
 
 ```sh
-incus exec "$INCUS_REMOTE:prometheus" -- promtool check config /etc/prometheus/prometheus.yml
+incus restart IncusOS:authelia
+incus restart IncusOS:grafana
+incus restart IncusOS:prometheus
 ```
 
-An unauthenticated Grafana request should
-redirect to Authelia, and only an `admins` group member should reach Grafana
-and see server administration. In Grafana Explore, query `up` and inspect the
-Prometheus targets; every configured target should become `1`. For Incus,
-also query an `incus_` metric to verify instance data. If Grafana's OIDC
-callback fails, check that Grafana can resolve and reach the public
-`auth.<base_domain>` URL from its private bridge (the split DNS setup must
-work there as well).
+Never pass a SecretID through HCL, Incus instance config, `user.*`, or
+cloud-init. The `secret-id` persists in the individual auth volume so Agent
+can authenticate after a reboot. It is a long-lived bootstrap credential:
+back up and protect it as such, revoke it when an instance is retired, and
+issue a new one for replacement. The Agent token and application secrets
+stay only in tmpfs. At startup the wrapper waits for every required file;
+if Agent fails, it stops the application and Incus retries the instance.
 
-The unauthenticated `/private` request must redirect to login or be denied;
-it must never return `200`. The root site's health route stays public.
+The AppRole policy permits exactly one `kv/data/<service>` path. Confirm an
+allowed read and a denied cross-service read with a test token. A leaked
+SecretID must be revoked via the AppRole SecretID accessor; rotate the
+application secrets separately. The server must be unsealed before clients
+can acquire new tokens; they retry while it is unavailable.
 
-## Enrollment messages and SMTP
+## Verify and operate
 
-The default notifier **does not send email**. It writes enrollment and reset
-links to `/data/notification.txt` inside the Authelia instance. For immediate
-enrollment, read it privately with:
+After enrollment, inspect `incus list IncusOS:` and the workload logs.
+Confirm `/run/secrets` is a tmpfs, files are owned by the service UID and
+mode `0400`, and only its own fields are present. Check that the application
+starts, then restart each instance to test reacquisition. Stop OpenBao,
+restart a workload, bring OpenBao back and unseal it: the application should
+start after Agent succeeds. Restart each application after changing a KV v2
+value to make it consume the new file. Authelia watches `users.yml` itself;
+other application configuration and key changes require a deliberate restart.
 
-```sh
-incus exec "$INCUS_REMOTE:authelia" -- cat /data/notification.txt
-```
+Caddy serves `https://grafana.<base_domain>` through Authelia forward auth.
+Grafana additionally requires Authelia OIDC membership in `admins` and grants
+that group Grafana server administration. An unauthenticated request to
+`/private` must redirect or be denied; `/health` stays public. In Grafana
+Explore, query `up` and inspect the configured Prometheus targets. Ensure
+private bridge DNS resolves `caddy.<private_dns_domain>`; Grafana must also
+reach the public `auth.<base_domain>` URL for OIDC callbacks.
 
-To receive those messages in your inbox, create a private file named
-`SMTP_PASSWORD` in the same directory as the three keys. Put the SMTP login
-password or app password in that file, with mode `0600`. Then create a local
-`smtp.auto.tfvars` in the checkout (ignored by Git) containing only the
-nonsecret settings supplied by your mail provider:
-
-```hcl
-authelia_smtp = {
-  address               = "submission://smtp.example.org:587"
-  username              = "login@example.org"
-  sender                = "Authelia <login@example.org>"
-  startup_check_address = "login@example.org"
-}
-```
-
-Use your provider's actual server, port, account, and permitted sender.
-Authelia requires TLS by default. The `submission` scheme uses STARTTLS on
-port 587; `submissions` uses implicit TLS on port 465. The SMTP password is
-uploaded from the private file and is not embedded in HCL or OpenTofu state.
-Run `tofu plan` and `tofu apply` again. Changing the notifier recreates the
-Authelia instance so it reads the new configuration, while its data and secret
-volumes persist. Trigger a fresh enrollment message after applying; previous
-links may have expired. Check the Authelia instance logs if SMTP startup fails.
-
-## Sensitive data
-
-Do not commit passwords, encryption keys, private keys, user databases, or
-OpenTofu plans and state. State is local to the operator's workstation and must
-be backed up privately; `.gitignore` only prevents accidental staging. Caddy's
-ACME data stays in the persistent `caddy-data` Incus volume. Authelia's SQLite
-database and filesystem notifications stay in the `authelia-data` volume, and
-its secret files in a separate read-only mounted volume. Back up the Authelia data volume
-together with its secret files: losing the storage encryption key makes stored
-data unusable.
-
-`tofu apply` changes the Incus server and requires an authenticated remote.
+Keep OpenTofu plan/state, OpenBao snapshots, the unseal shares, and bootstrap
+credentials private. Search a saved **canary** secret after apply in raw
+state, `tofu show -json`, Incus instance configuration, and provisioning logs;
+it must not be there. Caddy's ACME data, application databases, Prometheus
+series, and OpenBao Raft data are persistent and require separate backups.
 Committing this repository does not deploy anything.

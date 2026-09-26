@@ -20,36 +20,6 @@ resource "incus_storage_volume" "grafana_provisioning" {
   }
 }
 
-resource "incus_storage_volume" "grafana_secrets" {
-  name   = "grafana-secrets"
-  pool   = var.site.storage_pool
-  remote = var.site.incus_remote
-
-  file {
-    source_path = "${var.monitoring_secret_directory}/GRAFANA_CLIENT_SECRET"
-    target_path = "/GRAFANA_CLIENT_SECRET"
-    uid         = 472
-    gid         = 0
-    mode        = "0400"
-  }
-
-  file {
-    source_path = "${var.monitoring_secret_directory}/GRAFANA_ADMIN_PASSWORD"
-    target_path = "/GRAFANA_ADMIN_PASSWORD"
-    uid         = 472
-    gid         = 0
-    mode        = "0400"
-  }
-
-  file {
-    source_path = "${var.monitoring_secret_directory}/GRAFANA_SECRET_KEY"
-    target_path = "/GRAFANA_SECRET_KEY"
-    uid         = 472
-    gid         = 0
-    mode        = "0400"
-  }
-}
-
 resource "incus_storage_volume" "grafana_data" {
   name   = "grafana-data"
   pool   = var.site.storage_pool
@@ -73,16 +43,20 @@ resource "incus_instance" "grafana" {
 
   config = {
     "boot.autostart" = "true"
+    "boot.autorestart" = "true"
+    "oci.entrypoint" = "/opt/platform/start-oci.sh"
+    "environment.HOMELAB_SERVICE" = "grafana"
+    "environment.HOMELAB_REQUIRED_SECRETS" = join(" ", local.workload_fields.grafana)
     "environment.GF_SERVER_ROOT_URL" = "https://grafana.${var.site.base_domain}"
-    "environment.GF_SECURITY_ADMIN_PASSWORD__FILE" = "/secrets/GRAFANA_ADMIN_PASSWORD"
-    "environment.GF_SECURITY_SECRET_KEY__FILE" = "/secrets/GRAFANA_SECRET_KEY"
+    "environment.GF_SECURITY_ADMIN_PASSWORD__FILE" = "/run/secrets/admin_password"
+    "environment.GF_SECURITY_SECRET_KEY__FILE" = "/run/secrets/secret_key"
     "environment.GF_AUTH_BASIC_ENABLED" = "false"
     "environment.GF_AUTH_DISABLE_LOGIN_FORM" = "true"
     "environment.GF_AUTH_GENERIC_OAUTH_ENABLED" = "true"
     "environment.GF_AUTH_GENERIC_OAUTH_NAME" = "Authelia"
     "environment.GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN" = "true"
     "environment.GF_AUTH_GENERIC_OAUTH_CLIENT_ID" = "grafana-homelab"
-    "environment.GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE" = "/secrets/GRAFANA_CLIENT_SECRET"
+    "environment.GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET__FILE" = "/run/secrets/client_secret"
     "environment.GF_AUTH_GENERIC_OAUTH_SCOPES" = "openid profile email groups"
     "environment.GF_AUTH_GENERIC_OAUTH_AUTH_URL" = "https://auth.${var.site.base_domain}/api/oidc/authorization"
     "environment.GF_AUTH_GENERIC_OAUTH_TOKEN_URL" = "https://auth.${var.site.base_domain}/api/oidc/token"
@@ -138,13 +112,47 @@ resource "incus_instance" "grafana" {
   }
 
   device {
-    name = "secrets"
+    name = "agent-config"
     type = "disk"
     properties = {
-      path     = "/secrets"
+      path     = "/etc/openbao"
       pool     = var.site.storage_pool
-      source   = incus_storage_volume.grafana_secrets.name
+      source   = incus_storage_volume.workload_agent["grafana"].name
       readonly = "true"
+    }
+  }
+
+  device {
+    name = "auth"
+    type = "disk"
+    properties = {
+      path = "/var/lib/openbao-auth"
+      pool = var.site.storage_pool
+      source = incus_storage_volume.workload_auth["grafana"].name
+    }
+  }
+
+  device {
+    name = "tools"
+    type = "disk"
+    properties = {
+      path = "/opt/platform"
+      pool = var.site.storage_pool
+      source = incus_storage_volume.platform_tools.name
+      readonly = "true"
+    }
+  }
+
+  device {
+    name = "runtime-secrets"
+    type = "disk"
+    properties = {
+      path = "/run/secrets"
+      source = "tmpfs:"
+      size = "1MiB"
+      "initial.uid" = "472"
+      "initial.gid" = "0"
+      "initial.mode" = "0700"
     }
   }
 }

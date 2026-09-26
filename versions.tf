@@ -23,4 +23,11 @@ provider "incus" {
     protocol = "oci"
     public   = true
   }
+
+  remote {
+    name     = "images"
+    address  = "https://images.linuxcontainers.org"
+    protocol = "simplestreams"
+    public   = true
+  }
 }
