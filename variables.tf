@@ -7,6 +7,7 @@ variable "site" {
     lan_parent      = string
     caddy_mac       = string
     authelia_ip     = string
+    openbao_ip      = string
     prometheus_ip   = string
     grafana_ip      = string
     private_dns_domain = string
@@ -14,8 +15,8 @@ variable "site" {
   })
 }
 
-variable "authelia_secret_directory" {
-  description = "Absolute path outside this Git checkout containing SESSION_SECRET, STORAGE_ENCRYPTION_KEY, RESET_PASSWORD_JWT_SECRET and users.yml. The path, not the file contents, is stored in OpenTofu state."
+variable "platform_tools_directory" {
+  description = "Absolute path to a verified, pinned OpenBao binary outside the checkout. Contains bao."
   type        = string
 }
 
@@ -30,13 +31,8 @@ variable "authelia_smtp" {
   default = null
 }
 
-variable "monitoring_secret_directory" {
-  description = "Private directory outside the checkout with Grafana and OIDC secrets. File paths, not contents, are recorded in state."
-  type        = string
-}
-
 variable "incus_metrics" {
-  description = "Optional authenticated Incus metrics endpoint. Put its TLS certificate and key in monitoring_secret_directory before enabling."
+  description = "Optional authenticated Incus metrics endpoint. Enroll its certificate and key in OpenBao before starting Prometheus."
   type = object({
     target      = string
     server_name = string

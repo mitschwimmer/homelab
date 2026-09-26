@@ -1,0 +1,36 @@
+#cloud-config
+packages:
+  - openssl
+users:
+  - default
+  - name: openbao
+    uid: 900
+    system: true
+    no_create_home: true
+    shell: /usr/sbin/nologin
+write_files:
+  - path: /etc/systemd/system/openbao.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=OpenBao single-node server
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=openbao
+      Group=openbao
+      ExecStart=/opt/platform/bao server -config=/etc/openbao/server.hcl
+      Restart=always
+      RestartSec=5s
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ReadWritePaths=/var/lib/openbao
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - [mkdir, -p, /var/lib/openbao/tls, /var/lib/openbao/raft]
+  - [openssl, req, -x509, -newkey, ec, -pkeyopt, ec_paramgen_curve:prime256v1, -sha256, -nodes, -days, '3650', -subj, /CN=openbao, -addext, 'subjectAltName=IP:${openbao_ip},IP:127.0.0.1', -keyout, /var/lib/openbao/tls/server.key, -out, /var/lib/openbao/tls/server.crt]
+  - [chown, -R, '900:900', /var/lib/openbao]
+  - [chmod, '0600', /var/lib/openbao/tls/server.key]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, openbao.service]

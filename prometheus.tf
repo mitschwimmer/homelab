@@ -26,34 +26,6 @@ resource "incus_storage_volume" "prometheus_config" {
     mode        = "0644"
   }
 
-  dynamic "file" {
-    for_each = var.incus_metrics == null ? [] : [1]
-    content {
-      source_path = "${var.monitoring_secret_directory}/INCUS_SERVER_CERT"
-      target_path = "/INCUS_SERVER_CERT"
-      mode        = "0644"
-    }
-  }
-
-  dynamic "file" {
-    for_each = var.incus_metrics == null ? [] : [1]
-    content {
-      source_path = "${var.monitoring_secret_directory}/INCUS_METRICS_CERT"
-      target_path = "/INCUS_METRICS_CERT"
-      mode        = "0644"
-    }
-  }
-
-  dynamic "file" {
-    for_each = var.incus_metrics == null ? [] : [1]
-    content {
-      source_path = "${var.monitoring_secret_directory}/INCUS_METRICS_KEY"
-      target_path = "/INCUS_METRICS_KEY"
-      uid         = 65534
-      gid         = 65534
-      mode        = "0400"
-    }
-  }
 }
 
 resource "incus_storage_volume" "prometheus_data" {
@@ -73,7 +45,13 @@ resource "incus_instance" "prometheus" {
   remote   = var.site.incus_remote
   profiles = []
 
-  config = { "boot.autostart" = "true" }
+  config = {
+    "boot.autostart" = "true"
+    "boot.autorestart" = "true"
+    "oci.entrypoint" = "/opt/platform/start-oci.sh"
+    "environment.HOMELAB_SERVICE" = "prometheus"
+    "environment.HOMELAB_REQUIRED_SECRETS" = join(" ", local.workload_fields.prometheus)
+  }
 
   lifecycle {
     replace_triggered_by = [terraform_data.prometheus_configuration]
@@ -115,6 +93,51 @@ resource "incus_instance" "prometheus" {
       path   = "/prometheus"
       pool   = var.site.storage_pool
       source = incus_storage_volume.prometheus_data.name
+    }
+  }
+
+  device {
+    name = "agent-config"
+    type = "disk"
+    properties = {
+      path = "/etc/openbao"
+      pool = var.site.storage_pool
+      source = incus_storage_volume.workload_agent["prometheus"].name
+      readonly = "true"
+    }
+  }
+
+  device {
+    name = "auth"
+    type = "disk"
+    properties = {
+      path = "/var/lib/openbao-auth"
+      pool = var.site.storage_pool
+      source = incus_storage_volume.workload_auth["prometheus"].name
+    }
+  }
+
+  device {
+    name = "tools"
+    type = "disk"
+    properties = {
+      path = "/opt/platform"
+      pool = var.site.storage_pool
+      source = incus_storage_volume.platform_tools.name
+      readonly = "true"
+    }
+  }
+
+  device {
+    name = "runtime-secrets"
+    type = "disk"
+    properties = {
+      path = "/run/secrets"
+      source = "tmpfs:"
+      size = "1MiB"
+      "initial.uid" = "65534"
+      "initial.gid" = "65534"
+      "initial.mode" = "0700"
     }
   }
 }
