@@ -9,6 +9,26 @@ Agent and renders its own credentials to `/run/secrets` (tmpfs).
 This configuration is for a **new deployment**. It intentionally has no import
 or state migration from the previous workstation-file secret volumes.
 
+## Install IncusOS as measerve
+
+When reinstalling, include your workstation client certificate in the IncusOS
+installation image so the new server trusts your CLI. In the installation
+network seed, set `dns.hostname` to `measerve` if you want the OS hostname to
+match. The Incus client remote name is a separate workstation setting; add it
+after the server boots and confirm the fingerprint for its console IP:
+
+```sh
+incus remote get-client-certificate > client.crt
+# Provide client.crt to the IncusOS image customizer before installation.
+incus remote add measerve <host-IP>
+incus list measerve:
+```
+
+The host IP, network interface, private bridge subnet, and storage pool may
+change on reinstall. Verify the values in your ignored `site.auto.tfvars`
+before applying OpenTofu; use `site.auto.tfvars.example` as a guide.
+See the [IncusOS installation image instructions](https://linuxcontainers.org/incus-os/docs/main/getting-started/download/).
+
 ## Reset an existing IncusOS installation
 
 A reset is destructive: it erases the main system drive, including installed
@@ -22,7 +42,7 @@ with a new state. Do not apply the old state to the reset machine.
 From an authenticated Incus client, substitute your remote name and run:
 
 ```sh
-incus admin os system factory-reset IncusOS:
+incus admin os system factory-reset measerve:
 ```
 
 The command prompts for confirmation and reboots the system. A basic reset
@@ -39,9 +59,10 @@ IP address shown on the IncusOS console, then remove the stale remote and add
 it again. Confirm the new server fingerprint for the expected host:
 
 ```sh
-incus remote remove IncusOS
-incus remote add IncusOS <host-IP>
-incus list IncusOS:
+incus remote switch local
+incus remote remove measerve
+incus remote add measerve <host-IP>
+incus list measerve:
 ```
 
 If adding the remote succeeds but `incus list` reports an untrusted client,
@@ -50,7 +71,7 @@ remote only refreshes the workstation's trust of the server; it cannot grant
 the server trust in the client. Restore access using a seed containing your
 client certificate or the documented IncusOS lost-client-certificate recovery
 procedure before deploying anything. Check the storage pool and bridge names
-with `incus storage list IncusOS:` and `incus network list IncusOS:`.
+with `incus storage list measerve:` and `incus network list measerve:`.
 See the [IncusOS factory reset reference](https://linuxcontainers.org/incus-os/docs/main/reference/system/backup/#factory-reset).
 
 ## Prepare the workstation and site
@@ -66,9 +87,9 @@ to OpenBao or the monitoring ports is required.
 Inspect the bridge before assigning the four workload IPs:
 
 ```sh
-incus network show IncusOS:incusbr0
-incus network list-allocations IncusOS: --all-projects
-incus network list-leases IncusOS:incusbr0
+incus network show measerve:incusbr0
+incus network list-allocations measerve: --all-projects
+incus network list-leases measerve:incusbr0
 ```
 
 Pick unused addresses, ideally outside a configured DHCP range. For IncusOS
@@ -97,8 +118,8 @@ export TF_VAR_platform_tools_directory="$HOME/.local/share/homelab/openbao/2.7.0
 tofu init
 tofu plan
 tofu apply
-incus exec IncusOS:openbao -- cloud-init status --wait
-incus exec IncusOS:openbao -- systemctl status openbao
+incus exec measerve:openbao -- cloud-init status --wait
+incus exec measerve:openbao -- systemctl status openbao
 ```
 
 The Debian system container creates its own private TLS key and self-signed
@@ -107,14 +128,14 @@ on its private bridge NIC. It uses single-node integrated Raft storage; this
 is **not** a highly available server. Its initial unseal requires an operator:
 
 ```sh
-incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator init -key-shares=3 -key-threshold=2'
+incus exec measerve:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator init -key-shares=3 -key-threshold=2'
 ```
 
 Store the three unseal shares and initial root token securely outside the
 checkout, the host, and OpenTofu state. Use two distinct shares to unseal:
 
 ```sh
-incus exec IncusOS:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator unseal'
+incus exec measerve:openbao -- sh -c 'BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/var/lib/openbao/tls/server.crt /opt/platform/bao operator unseal'
 ```
 
 Run the unseal command twice, entering one share at each prompt. Repeat after
@@ -124,7 +145,7 @@ workstation. In a separate terminal, tunnel the server through the authenticated
 Incus connection; this listens on **workstation loopback only**:
 
 ```sh
-incus port-forward IncusOS:openbao 8200 18200
+incus port-forward measerve:openbao 8200 18200
 ```
 
 Then, in the terminal running `bao`:
@@ -132,7 +153,7 @@ Then, in the terminal running `bao`:
 ```sh
 umask 077
 tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
-incus file pull IncusOS:openbao/var/lib/openbao/tls/server.crt "$tmp/server.crt"
+incus file pull measerve:openbao/var/lib/openbao/tls/server.crt "$tmp/server.crt"
 export BAO_ADDR=https://127.0.0.1:18200
 export BAO_CACERT="$tmp/server.crt"
 bao login
@@ -209,7 +230,7 @@ To enable SMTP, set the non-secret `authelia_smtp` object in an ignored local
 `*.tfvars` file with `address`, `username`, `sender`, and
 `startup_check_address`, and add `smtp_password` to `kv/authelia`. Otherwise,
 Authelia writes enrollment links to `/data/notification.txt`; retrieve them
-privately with `incus exec IncusOS:authelia -- cat /data/notification.txt`.
+privately with `incus exec measerve:authelia -- cat /data/notification.txt`.
 Use `submission://host:587` for STARTTLS or `submissions://host:465` for
 implicit TLS. An SMTP configuration change recreates Authelia but preserves
 its data volume.
@@ -224,7 +245,7 @@ register the public certificate:
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 \
   -keyout /private/INCUS_METRICS_KEY -nodes \
   -out /private/INCUS_METRICS_CERT -days 3650 -subj /CN=homelab-metrics
-incus config trust add-certificate IncusOS: \
+incus config trust add-certificate measerve: \
   /private/INCUS_METRICS_CERT --type=metrics
 ```
 
@@ -271,7 +292,7 @@ respectively:
 ```sh
 service=authelia
 uid=0
-remote=IncusOS
+remote=measerve
 pool=local
 bao write "auth/approle/role/$service" "token_policies=$service" \
   token_no_default_policy=true token_ttl=1h token_max_ttl=4h \
@@ -292,9 +313,9 @@ Restart the three instances after enrollment so each Agent loads its new
 credential and CA; a failed first boot can exhaust Incus's restart attempts:
 
 ```sh
-incus restart IncusOS:authelia
-incus restart IncusOS:grafana
-incus restart IncusOS:prometheus
+incus restart measerve:authelia
+incus restart measerve:grafana
+incus restart measerve:prometheus
 ```
 
 Never pass a SecretID through HCL, Incus instance config, `user.*`, or
@@ -313,7 +334,7 @@ can acquire new tokens; they retry while it is unavailable.
 
 ## Verify and operate
 
-After enrollment, inspect `incus list IncusOS:` and the workload logs.
+After enrollment, inspect `incus list measerve:` and the workload logs.
 Confirm `/run/secrets` is a tmpfs, files are owned by the service UID and
 mode `0400`, and only its own fields are present. Check that the application
 starts, then restart each instance to test reacquisition. Stop OpenBao,
