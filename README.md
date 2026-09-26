@@ -3,6 +3,9 @@
 OpenTofu definitions for the IncusOS homelab: Caddy serves public HTTPS and
 consults Authelia over the private Incus bridge for protected routes.
 
+The [Caddy and Authelia architecture decision](docs/adr/0001-caddy-and-authelia.md)
+records the reasons for this arrangement and its tradeoffs.
+
 ## Prerequisites
 
 Use a workstation with OpenTofu and an authenticated Incus client remote.
