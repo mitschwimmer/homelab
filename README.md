@@ -6,7 +6,13 @@ OpenTofu manages IncusOS networking, OCI instances, and persistent volumes. Open
 
 This is a fresh-deployment recipe. If the host or any data already exists, **inventory and back it up first**; use the [recovery guide](docs/recovery.md) rather than resetting or wiping drives. In particular, an IncusOS system backup does not include installed application data. Do not apply old OpenTofu state to a different Incus installation, or apply empty state over restored resources without importing them.
 
-Install OpenTofu, `incus`, `bao`, OpenSSL, and GnuPG on the workstation. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, addresses, and DNS against the **current** host:
+On NixOS, enter a shell with the tools used below (`incus.client` provides the CLI without the Incus server):
+
+```sh
+nix-shell -p opentofu incus.client openbao openssl gnupg python3
+```
+
+The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, addresses, and DNS against the **current** host:
 
 ```sh
 incus storage list measerve:
