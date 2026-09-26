@@ -1,6 +1,6 @@
 locals {
   openbao_server_configuration = templatefile("${path.module}/openbao/server.hcl.tftpl", {
-    openbao_ip = var.site.openbao_ip
+    openbao_ip = local.private_ips.openbao
   })
 }
 
@@ -57,7 +57,7 @@ resource "incus_instance" "openbao" {
     type = "nic"
     properties = {
       network        = var.site.private_bridge
-      "ipv4.address" = var.site.openbao_ip
+      "ipv4.address" = local.private_ips.openbao
     }
   }
 

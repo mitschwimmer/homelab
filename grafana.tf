@@ -1,6 +1,6 @@
 locals {
   grafana_datasource_configuration = templatefile("${path.module}/grafana/datasources.yml.tftpl", {
-    prometheus_ip = var.site.prometheus_ip
+    prometheus_ip = local.private_ips.prometheus
   })
 }
 
@@ -85,7 +85,7 @@ resource "incus_instance" "grafana" {
     type = "nic"
     properties = {
       network        = var.site.private_bridge
-      "ipv4.address" = var.site.grafana_ip
+      "ipv4.address" = local.private_ips.grafana
     }
   }
 

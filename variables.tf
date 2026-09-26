@@ -1,18 +1,27 @@
 variable "site" {
   description = "Installation-specific IncusOS, LAN and domain settings. Use a local site.auto.tfvars; see site.auto.tfvars.example."
   type = object({
-    incus_remote       = string
-    storage_pool       = string
-    private_bridge     = string
-    lan_parent         = string
-    caddy_mac          = string
-    authelia_ip        = string
-    openbao_ip         = string
-    prometheus_ip      = string
-    grafana_ip         = string
+    incus_remote   = string
+    storage_pool   = string
+    private_bridge = string
+    lan_parent     = string
+    caddy_mac      = string
+    private_host_numbers = object({
+      authelia   = number
+      openbao    = number
+      prometheus = number
+      grafana    = number
+    })
     private_dns_domain = string
     base_domain        = string
   })
+
+  validation {
+    condition = length(distinct(values(var.site.private_host_numbers))) == 4 && alltrue([
+      for n in values(var.site.private_host_numbers) : n > 1 && n == floor(n)
+    ])
+    error_message = "Choose four distinct whole private host numbers greater than 1. Check the computed IPs against Incus allocations and DHCP leases."
+  }
 }
 
 variable "authelia_smtp" {

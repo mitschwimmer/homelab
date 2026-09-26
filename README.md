@@ -12,7 +12,7 @@ On NixOS, enter a shell with the tools used below (`incus.client` provides the C
 nix-shell -p opentofu incus.client openbao openssl gnupg python3
 ```
 
-The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, addresses, and DNS against the **current** host:
+The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. The shell snippets below use Bash; if your interactive shell is fish, run `bash` before following them. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, host numbers, and DNS against the **current** host:
 
 ```sh
 incus storage list measerve:
@@ -21,34 +21,36 @@ incus network list-allocations measerve: --all-projects
 incus network list-leases measerve:incusbr0
 ```
 
-Set all four `*_ip` values in `site.auto.tfvars` to free addresses **inside** the bridge's `ipv4.address` CIDR, ideally outside its DHCP range. The addresses in the example file describe an earlier host and may not fit a rebuilt bridge. Reserve Caddy's LAN MAC in the router; configure public DNS for the base domain, `auth`, and `grafana`, and forward HTTP/HTTPS to Caddy. OpenBao stays on the private bridge. Replace `measerve` and `local` below with your site values.
+OpenTofu reads the bridge's `ipv4.address` CIDR from Incus and derives four addresses using `private_host_numbers` (offsets from the network address). If you have an older `site.auto.tfvars`, replace its four `*_ip` entries with the `private_host_numbers` block in the updated example. Choose distinct host numbers whose computed addresses are free, outside the DHCP range, and neither the gateway nor the broadcast address. The provider does not select unused addresses for you. Reserve Caddy's LAN MAC in the router; configure public DNS for the base domain, `auth`, and `grafana`, and forward HTTP/HTTPS to Caddy. OpenBao stays on the private bridge. Replace `measerve` and `local` below with your site values.
 
 ## Bootstrap OpenBao
 
 The pinned official `openbao/openbao:2.7.0` image runs as UID/GID 900. Incus overrides its development-mode command with `bao server -config=/etc/openbao/server.hcl`. Its Raft data, audit log, and TLS files live in `openbao-data`, separate from the image. A restored volume already has TLS files: **do not generate a new key or initialize it again**.
 
-```sh
+```bash
 tofu init
 # Provision volumes only; the server cannot start until TLS exists.
 tofu apply -target=incus_storage_volume.openbao_data \
   -target=incus_storage_volume.openbao_config \
   -target=incus_storage_volume.workload_secrets
-# Once on a new, empty volume only; enter the openbao_ip from site.auto.tfvars:
-read -rp 'OpenBao IP: ' openbao_ip
+# Read the address computed from the current bridge, then check it is unused.
+openbao_ip=$(printf 'local.private_ips.openbao\n' | tofu console | python3 -c 'import json,sys; print(json.load(sys.stdin))')
+printf 'OpenBao address: %s\n' "$openbao_ip"
+# Only for a new, empty openbao-data volume:
 bash scripts/bootstrap-openbao-tls.sh measerve local "$openbao_ip"
 tofu apply -target=incus_instance.openbao
 incus port-forward measerve:openbao 8200 18200
 ```
 
-If Incus rejects the instance because its IP is outside the bridge subnet, inspect `incus network get measerve:incusbr0 ipv4.address` and the allocations/leases above, then correct `openbao_ip` in `site.auto.tfvars`. If you already ran the TLS bootstrap with the old IP, update **only its certificate** using the existing key before retrying; do not delete `openbao-data` or run initialization:
+Check the printed address against the allocations and leases above before bootstrapping. If an older configuration created TLS for a different IP, or you change the host number, update **only the certificate** using the existing key before retrying. Preserve `openbao-data` and do not initialize OpenBao again:
 
-```sh
-read -rp 'Corrected OpenBao IP: ' openbao_ip
+```bash
+openbao_ip=$(printf 'local.private_ips.openbao\n' | tofu console | python3 -c 'import json,sys; print(json.load(sys.stdin))')
 bash scripts/reissue-openbao-cert.sh measerve local "$openbao_ip"
 tofu apply -target=incus_instance.openbao
 ```
 
-Enter the same corrected address you put in `site.auto.tfvars`. The reissue command keeps the private key. If the server has already been initialized, preserve its Raft data and unseal shares; reissuing its self-signed certificate changes the trust anchor clients must enroll.
+The reissue command keeps the private key. If the server has already been initialized, preserve its Raft data and unseal shares; reissuing its self-signed certificate changes the trust anchor clients must enroll.
 
 Keep `incus port-forward` running in one terminal. In another, copy the public certificate to workstation **tmpfs** and use the CLI over loopback:
 
