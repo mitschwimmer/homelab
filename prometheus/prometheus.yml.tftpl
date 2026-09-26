@@ -26,9 +26,9 @@ scrape_configs:
     static_configs:
       - targets: [${jsonencode(incus_metrics_target)}]
     tls_config:
-      ca_file: /run/secrets/incus_server_cert
-      cert_file: /run/secrets/incus_metrics_cert
-      key_file: /run/secrets/incus_metrics_key
+      ca_file: /var/lib/homelab-secrets/incus_server_cert
+      cert_file: /var/lib/homelab-secrets/incus_metrics_cert
+      key_file: /var/lib/homelab-secrets/incus_metrics_key
       server_name: ${jsonencode(incus_metrics_server_name)}
 %{ endif ~}
 %{ for target in extra_targets ~}

@@ -1,57 +1,52 @@
 locals {
+  # Field names and destinations are public configuration. Values are fetched
+  # after OpenTofu creates the volumes; they never enter plans or state.
   workload_fields = {
-    authelia = concat([
+    # Keys are destination filenames; values are KV v2 field names.
+    authelia = merge({ for field in [
       "session_secret", "storage_encryption_key", "reset_password_jwt_secret",
-      "users.yml", "oidc_hmac_secret", "oidc_jwks", "grafana_client_secret_hash"
-    ], var.authelia_smtp == null ? [] : ["smtp_password"])
-    grafana = ["client_secret", "admin_password", "secret_key"]
-    prometheus = concat(["agent_ready"], var.incus_metrics == null ? [] : [
+      "oidc_hmac_secret", "oidc_jwks", "grafana_client_secret_hash"
+      ] : field => field }, { "users.yml" = "users_yml" },
+    var.authelia_smtp == null ? {} : { "smtp_password" = "smtp_password" })
+    grafana = { for field in ["client_secret", "admin_password", "secret_key"] : field => field }
+    prometheus = var.incus_metrics == null ? {} : { for field in [
       "incus_server_cert", "incus_metrics_cert", "incus_metrics_key"
-    ])
+    ] : field => field }
   }
 
-  workload_uids = {
-    authelia   = 0
-    grafana    = 472
-    prometheus = 65534
+  workload_owners = {
+    authelia   = { uid = 1000, gid = 1000 }
+    grafana    = { uid = 472, gid = 0 }
+    prometheus = { uid = 65534, gid = 65534 }
   }
+
+  secret_workloads = { for service, fields in local.workload_fields : service => fields if length(fields) > 0 }
 }
 
-# Every application has separate bootstrap material and Agent configuration.
-# These volumes hold role IDs, SecretIDs and the server CA only after the
-# operator enrolls them directly through Incus; OpenTofu never sees their bytes.
-resource "incus_storage_volume" "workload_auth" {
-  for_each = local.workload_fields
-  name     = "${each.key}-openbao-auth"
+# Private persistent volumes can be populated while OCI instances are stopped
+# and survive instance replacement. Their backups contain application secrets.
+resource "incus_storage_volume" "workload_secrets" {
+  for_each = local.secret_workloads
+  name     = "${each.key}-secrets"
   pool     = var.site.storage_pool
   remote   = var.site.incus_remote
   config = {
-    "initial.uid"  = tostring(local.workload_uids[each.key])
-    "initial.gid"  = tostring(local.workload_uids[each.key])
+    "initial.uid"  = tostring(local.workload_owners[each.key].uid)
+    "initial.gid"  = tostring(local.workload_owners[each.key].gid)
     "initial.mode" = "0700"
   }
 }
 
-resource "incus_storage_volume" "workload_agent" {
-  for_each = local.workload_fields
-  name     = "${each.key}-openbao-agent"
-  pool     = var.site.storage_pool
-  remote   = var.site.incus_remote
-
-  file {
-    content = templatefile("${path.module}/openbao/agent.hcl.tftpl", {
-      openbao_ip = var.site.openbao_ip
-      templates = join("\n", [for field in each.value : <<-EOT
-        template {
-          contents = "{{ with secret \"kv/data/${each.key}\" }}{{ .Data.data.${replace(field, ".", "_")} }}{{ end }}"
-          destination = "/run/secrets/${field}"
-          perms = "0400"
-          error_on_missing_key = true
-        }
-      EOT
-      ])
-    })
-    target_path = "/agent.hcl"
-    mode        = "0444"
+output "secret_deployment" {
+  description = "Non-secret destinations consumed by scripts/deploy-secrets.py"
+  value = {
+    for service, fields in local.secret_workloads : service => {
+      remote = var.site.incus_remote
+      pool   = var.site.storage_pool
+      volume = incus_storage_volume.workload_secrets[service].name
+      uid    = local.workload_owners[service].uid
+      gid    = local.workload_owners[service].gid
+      fields = fields
+    }
   }
 }
