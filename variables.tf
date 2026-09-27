@@ -8,7 +8,6 @@ variable "site" {
     caddy_mac      = string
     private_host_numbers = object({
       authelia   = number
-      openbao    = number
       prometheus = number
       grafana    = number
     })
@@ -17,15 +16,27 @@ variable "site" {
   })
 
   validation {
-    condition = length(distinct(values(var.site.private_host_numbers))) == 4 && alltrue([
+    condition = length(distinct(values(var.site.private_host_numbers))) == 3 && alltrue([
       for n in values(var.site.private_host_numbers) : n > 1 && n == floor(n)
     ])
-    error_message = "Choose four distinct whole private host numbers greater than 1, avoiding the bridge gateway and broadcast address."
+    error_message = "Choose three distinct whole private host numbers greater than 1, avoiding the bridge gateway and broadcast address."
   }
 }
 
+variable "state_passphrase" {
+  description = "Stable KeePass-held encryption passphrase. Supply only through scripts/homelab.py."
+  type        = string
+  sensitive   = true
+}
+
+variable "workload_secrets" {
+  description = "Values loaded from KeePass by scripts/homelab.py. Never put them in tfvars or Git."
+  type        = map(map(string))
+  sensitive   = true
+}
+
 variable "authelia_smtp" {
-  description = "Set to use SMTP instead of the filesystem notifier. Put only nonsecret SMTP settings here; store smtp_password in OpenBao."
+  description = "Set to use SMTP instead of the filesystem notifier. Put only nonsecret SMTP settings here; store smtp_password in KeePass."
   type = object({
     address               = string
     username              = string
@@ -36,7 +47,7 @@ variable "authelia_smtp" {
 }
 
 variable "incus_metrics" {
-  description = "Optional authenticated Incus metrics endpoint. Enroll its certificate and key in OpenBao before starting Prometheus."
+  description = "Optional authenticated Incus metrics endpoint. Enroll its certificate and key in KeePass before starting Prometheus."
   type = object({
     target      = string
     server_name = string

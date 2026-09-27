@@ -1,124 +1,63 @@
 # Homelab
 
-OpenTofu manages IncusOS networking, OCI instances, and persistent volumes. OpenBao holds application credentials. An operator copies selected KV fields into private, read-only mounted files; workloads run without OpenBao identities or Agents. See [ADR 0002](docs/adr/0002-openbao-deployment-secrets.md).
+OpenTofu manages IncusOS networking, OCI instances, persistent volumes, and their private configuration files. A local KeePass database is the source of application secrets. `scripts/homelab.py` unlocks it and passes values to OpenTofu, which encrypts local state and saved plans with AES-GCM. See [ADR 0002](docs/adr/0002-keepass-and-encrypted-state.md).
 
-## Before applying
+## Prepare the operator workstation
 
-This is a fresh-deployment recipe. If the host or any data already exists, **inventory and back it up first**; use the [recovery guide](docs/recovery.md) rather than resetting or wiping drives. In particular, an IncusOS system backup does not include installed application data. Do not apply old OpenTofu state to a different Incus installation, or apply empty state over restored resources without importing them.
-
-On NixOS, enter a shell with the tools used below (`incus.client` provides the CLI without the Incus server):
-
-```sh
-nix-shell -p opentofu incus.client openbao openssl gnupg python3
-```
-
-The interactive commands below use **Bash** syntax. If your `nix-shell` prompt is in fish, run `bash` before the later CLI steps. The bootstrap script itself runs under Bash.
-
-The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, host numbers, and DNS against the **current** host:
+Use the authenticated `measerve` Incus remote and an OpenTofu version supporting state encryption. Install Python and the two dependencies in `requirements.txt` in an isolated environment. On NixOS, enter a shell with `opentofu`, `incus.client`, Python, and packages for PyKeePass and `cryptography`. Keep your existing `site.auto.tfvars` outside Git, removing the `openbao` host-number entry; the example shows the remaining fields. Verify your pool and bridge before applying:
 
 ```sh
 incus storage list measerve:
 incus network show measerve:incusbr0
 ```
 
-The managed bridge needs an `ipv4.address` CIDR, but a new cluster need not have assigned any instance IPs yet. OpenTofu derives four addresses from that CIDR using `private_host_numbers` (offsets from the network address). Choose distinct numbers that do not designate the bridge gateway, network, or broadcast address. If you have an older `site.auto.tfvars`, replace its four `*_ip` entries with the block in the updated example. Reserve Caddy's LAN MAC in the router; configure public DNS for the base domain, `auth`, and `grafana`, and forward HTTP/HTTPS to Caddy. OpenBao stays on the private bridge. Replace `measerve` and `local` below with your site values.
+The bridge address numbers must be distinct and must avoid its gateway and broadcast addresses. Caddy's LAN MAC needs a DHCP reservation, public DNS, and ports 80/443 forwarded to it. The public domain and private bridge are site-specific.
 
-## Bootstrap OpenBao
-
-The pinned official `openbao/openbao:2.7.0` image runs as UID/GID 900. Incus overrides its development-mode command with `bao server -config=/etc/openbao/server.hcl`. Its Raft data, audit log, and TLS files live in `openbao-data`, separate from the image. A restored volume already has TLS files: **do not generate a new key or initialize it again**. From the repository root, run:
+Choose a KeePass database path **outside this checkout**, for example `$HOME/private/homelab.kdbx`. Protect and back it up independently of the OpenTofu state. The commands below abbreviate it as `DB`:
 
 ```sh
-bash scripts/bootstrap-openbao.sh
+DB="$HOME/private/homelab.kdbx"
+python3 scripts/homelab.py --database "$DB" init-secrets
 ```
 
-The script creates the volumes, derives OpenBao's IP from Incus, installs TLS after you confirm the volume is new and empty, creates the container, forwards the API temporarily, and initializes and unseals OpenBao with terminal prompts. **Store the printed shares and root token separately off-host** before proceeding. The server configuration declares a persistent file audit device; the script verifies it, enables KV v2, and installs the deployment policy, then closes its port forward. Reruns reuse an existing certificate and initialize only when OpenBao reports that it has not been initialized. If TLS creation stopped partway through, the script refuses to overwrite it; inspect the volume before resetting anything. Review each targeted OpenTofu plan before approving it.
+`init-secrets` creates a KDBX database if absent, prompts for its master password, and generates stable random application values, an RSA OIDC signing key, and a **separate** random state-encryption passphrase. Repeating it retains existing entries. Never change or lose `state_passphrase` while any state or saved plan encrypted with it exists.
 
-### Recover from the audit API error
-
-If an earlier bootstrap stopped after unsealing with `cannot enable audit device via API`, OpenBao is already initialized. Keep the original shares, token, TLS files, and `openbao-data`. Apply the updated server configuration, restart the container to load its declarative audit stanza, and rerun the script:
+Complete the required entries by piping private files to `set`:
 
 ```sh
-tofu apply -target=incus_storage_volume.openbao_config
-incus restart measerve:openbao
-bash scripts/bootstrap-openbao.sh
+python3 scripts/homelab.py --database "$DB" set authelia/users_yml < /private/users.yml
+python3 scripts/homelab.py --database "$DB" set grafana/client_secret < /private/grafana-client-secret
+python3 scripts/homelab.py --database "$DB" set authelia/grafana_client_secret_hash < /private/grafana-client-hash
 ```
 
-The restart seals OpenBao again. Enter **two different existing shares** when the script prompts; it will not call `bao operator init` again. Substitute your Incus remote for `measerve`.
-
-If an existing certificate covers a different bridge IP, the script stops without changing the key, Raft data, or certificate. Reissue **only** that certificate for the computed address, then rerun the script:
-
-```bash
-openbao_ip=$(printf 'local.private_ips.openbao\n' | tofu console | python3 -c 'import json,sys; print(json.load(sys.stdin))')
-bash scripts/reissue-openbao-cert.sh measerve local "$openbao_ip"
-bash scripts/bootstrap-openbao.sh
-```
-
-The reissue command keeps the private key. Reissuing the self-signed certificate changes the trust anchor clients must enroll. Do not change the host number on a running OpenBao installation without planning that client update.
-
-### Retry or start over
-
-For a failed bootstrap, **rerun the script first**. The container is replaceable, but `openbao-data` is a separate persistent volume containing Raft state, TLS key, audit log, and any secrets already stored. OpenTofu state tracks these resources; deleting state entries does not delete the real volumes and can make the next apply conflict with them. If you need to keep an initialized installation, preserve the volume and original unseal shares and follow the [recovery guide](docs/recovery.md).
-
-For a deliberate clean start on a new installation, first decide that **all contents of `openbao-data` can be discarded**. If OpenBao was initialized, this loses its KV data and invalidates its old root token and unseal shares; any workloads relying on it will need their secrets restored or replaced. Back up anything you need. Review and approve this targeted destruction, then run the script again:
+Create `users.yml` from `authelia/users.yml.example` with an Argon2 password hash and an `admins` user. Generate the **matching** Grafana client secret and PBKDF2 hash using the Authelia CLI, then place its “Random Password” and “Digest” outputs in the two private files above:
 
 ```sh
-tofu destroy -target=incus_instance.openbao -target=incus_storage_volume.openbao_data -target=incus_storage_volume.openbao_config
-bash scripts/bootstrap-openbao.sh
+authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72 --random.charset rfc3986
 ```
 
-This removes the tracked OpenBao instance and its two custom volumes; OpenTofu retains state for other resources. It does not reset IncusOS, the bridge, or other workloads. If a volume exists outside the current state, stop and import or inspect it rather than applying fresh state over it. Never remove the whole state file to restart one service.
+If SMTP is configured in `site.auto.tfvars`, add `authelia/smtp_password`. If Incus metrics are configured, add `prometheus/incus_server_cert`, `prometheus/incus_metrics_cert`, and `prometheus/incus_metrics_key` together. The file-based notifier works without SMTP; without metrics configuration, Prometheus needs none of those entries. Only use `set` with private input files: it reads the value from stdin, never a shell argument. Remove temporary copies after checking the KeePass database and backup.
 
-### Admin access and backups
+## Migrate existing plaintext state
 
-For later administration, keep `incus port-forward measerve:openbao 8200 18200` running in one terminal. In another, copy the public certificate to workstation **tmpfs** and use the CLI over loopback:
+**Do this before an ordinary plan or apply with the new checkout.** First back up the existing state outside the repository and keep the earlier plaintext state backups private. The OpenBao retirement step already made such a backup. Check that the existing state reflects the removal of its three resources. Do not reset state or recreate the host.
 
-```bash
-umask 077
-bao_tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
-incus storage volume file pull measerve:local openbao-data/tls/server.crt "$bao_tmp/server.crt"
-export BAO_ADDR=https://127.0.0.1:18200 BAO_CACERT="$bao_tmp/server.crt"
+```sh
+python3 scripts/homelab.py --database "$DB" migrate-state
+python3 scripts/homelab.py --database "$DB" tofu init
 ```
 
-Store the three shares and initial root token **off-host**, separately from OpenTofu state. Unseal again after a server restart with two different shares. Read the root token without shell history or the CLI token helper when administrative work requires it:
+The migration runs from a private temporary configuration against the existing local state, with a **one-time** plaintext read fallback. Its targeted plan must create only `terraform_data.state_encryption`, a state-only marker; it must not change any Incus resource. The script verifies the resulting encrypted state envelope. The checked-in configuration has no plaintext fallback and enforces encryption for both state and plans. Keep any `terraform.tfstate.backup` and earlier copies private: OpenTofu may leave pre-migration plaintext backups. Preserve the same state passphrase and an off-host backup of the encrypted state and KeePass database. [OpenTofu's migration documentation](https://opentofu.org/docs/language/state/encryption/) explains why the fallback is needed.
 
-```bash
-read -rsp 'OpenBao token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
-bao token lookup
+For a brand-new empty installation, skip `migrate-state` and run `tofu init` through the wrapper as above.
+
+## Apply and operate
+
+Run every OpenTofu command through the wrapper, including `init`, `plan`, `apply`, `output`, `state`, and `destroy`, because the state key is required for reading the encrypted state. The wrapper prompts for the KeePass master password each time and supplies secrets as sensitive input variables. It does not write plaintext tfvars or saved plans. Avoid `tofu show -json`, `tofu state pull`, verbose provider logging, and captured process environments unless the output is handled as secret material; encryption protects files at rest, not a running operator process.
+
+```sh
+python3 scripts/homelab.py --database "$DB" tofu plan
+python3 scripts/homelab.py --database "$DB" tofu apply
 ```
 
-Take an off-host `bao operator raft snapshot save` and export the `openbao-data` volume, which includes the TLS key. Check that both are restorable before depending on this server. Clear `BAO_TOKEN` and remove `$bao_tmp` when finished. Use short-lived scoped tokens for routine deployments.
-
-## Store and deliver application secrets
-
-Generate Authelia's session, storage, and reset keys (`openssl rand -hex 32`); prepare `authelia/users.yml.example` privately with an Argon2 hash (`authelia crypto hash generate argon2`). Generate OIDC JWKS and HMAC keys, the Grafana client secret and matching PBKDF2 hash, Grafana's secret key, and an initial admin password. Put users who administer Grafana in the `admins` group. Do not place values in Git, tfvars, plans, or state.
-
-| KV key | Fields |
-| --- | --- |
-| `kv/authelia` | `session_secret`, `storage_encryption_key`, `reset_password_jwt_secret`, `users_yml`, `oidc_hmac_secret`, `oidc_jwks`, `grafana_client_secret_hash`; optional `smtp_password` |
-| `kv/grafana` | `client_secret`, `admin_password`, `secret_key` |
-| `kv/prometheus` | Optional `incus_server_cert`, `incus_metrics_cert`, `incus_metrics_key` |
-
-Use `bao kv put -mount=kv authelia field=@/private/file ...` with **all** fields for that key in one write: `put` replaces the current version. Use `bao kv patch` for one-field changes. The Grafana client plaintext belongs in `kv/grafana`; its matching hash belongs in `kv/authelia`. Authelia's signing and encryption keys are needed for database recovery. The Authelia image can make the pair with `authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72 --random.charset rfc3986`. Keep temporary source files private and remove them after verification.
-
-With a root session, issue a scoped token, then replace the root token in the environment using the prompt:
-
-```bash
-bao token create -policy=deploy-secrets -ttl=1h -no-default-policy
-unset BAO_TOKEN
-read -rsp 'Deployment token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
-python3 scripts/deploy-secrets.py
-tofu plan
-tofu apply
-```
-
-The script reads `tofu output -json secret_deployment`, fetches KV fields and streams them to Incus volumes. Values never enter OpenTofu. Files are mode `0400`, owned by their non-root application UID, in private `0700` volumes mounted read-only. A failed transfer stops deployment; recopy all fields for that service before restarting. Targeted applies above only establish first-boot order; the final full apply reconciles the configuration.
-
-For rotation, update KV, then `python3 scripts/deploy-secrets.py authelia` and `incus restart measerve:authelia` (substitute the service). KV changes do not automatically update files. Remove obsolete files from the volume after removing their manifest entries.
-
-Optional SMTP uses non-secret `authelia_smtp` tfvars and `smtp_password` in KV. Without SMTP, Authelia writes enrollment links to `/data/notification.txt`. Optional Incus metrics requires a separately enrolled `--type=metrics` Incus client certificate, its key and server certificate in `kv/prometheus`, and the non-secret `incus_metrics` tfvars. Create the Prometheus secret volume, deploy its three fields, then apply fully. See [Incus metrics](https://linuxcontainers.org/incus/docs/main/metrics/).
-
-## Check and operate
-
-Inspect `incus list measerve:` and application logs. Verify UID/GID, file modes, read-only mounts, and that each app can read its own files. Reboot and confirm files survive; OpenBao may require manual unseal, while already provisioned workloads can start independently. Test a rotation and a restore from protected backups. Inspect raw state, a saved plan, Incus instance configuration, and logs for a canary value; only OpenBao and the intended secret volume should contain it.
-
-Back up OpenBao Raft **and** TLS/unseal material, IncusOS system configuration and pool keys, Incus application state, application data volumes, and the secret volumes. Protect old snapshots after rotation. Caddy ACME data and Prometheus/Grafana databases also need backups. See [recovery](docs/recovery.md). A commit or push to this repository does not deploy the host.
+Review the first plan for intended changes to `authelia-secrets` and `grafana-secrets`, and for **no replacement or deletion of existing application data volumes**. The provider writes mode `0400` files with each application's UID/GID into private `0700` volumes, mounted read-only in each OCI instance. The encrypted state and any saved plan contain the secret values. Incus, its custom volumes and backups also contain them. A change to KeePass takes effect only after `tofu apply`; restart the affected application if it does not reload the changed file. Back up and restore the KeePass database, state, IncusOS pool keys, Incus application, and workload volumes as described in [recovery](docs/recovery.md). A push to GitHub does not deploy the host.

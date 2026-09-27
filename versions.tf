@@ -1,12 +1,35 @@
 terraform {
   required_version = ">= 1.7.0"
 
+  encryption {
+    key_provider "pbkdf2" "homelab" {
+      passphrase = var.state_passphrase
+    }
+    method "aes_gcm" "homelab" {
+      keys = key_provider.pbkdf2.homelab
+    }
+    state {
+      method   = method.aes_gcm.homelab
+      enforced = true
+    }
+    plan {
+      method   = method.aes_gcm.homelab
+      enforced = true
+    }
+  }
+
   required_providers {
     incus = {
       source  = "lxc/incus"
       version = "~> 1.2"
     }
   }
+}
+
+# A state-only marker lets the one-time migration write encrypted state without
+# creating or modifying any Incus resource.
+resource "terraform_data" "state_encryption" {
+  input = "state-encryption-v1"
 }
 
 provider "incus" {

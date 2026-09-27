@@ -5,6 +5,7 @@
 *.tfplan
 *.tfvars
 *.tfvars.json
+*.kdbx
 crash.log
 crash.*.log
 override.tf

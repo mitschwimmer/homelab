@@ -26,7 +26,6 @@ site = {
   # host numbers that are not the bridge gateway or broadcast address.
   private_host_numbers = {
     authelia   = 10
-    openbao    = 13
     prometheus = 11
     grafana    = 12
   }
