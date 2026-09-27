@@ -105,13 +105,14 @@ def init(db, group, path):
         put(db, group, "authelia/oidc_jwks", pem)
     client = entry(db, group, "grafana/client_secret")
     digest = entry(db, group, "authelia/grafana_client_secret_hash")
-    if bool(client and client.password) != bool(digest and digest.password):
-        raise ValueError("Grafana OIDC client pair is incomplete; restore both entries or remove the partial entry and rerun init-secrets")
-    if not client or not client.password:
+    incomplete = bool(client and client.password) != bool(digest and digest.password)
+    if not (client and client.password and digest and digest.password):
         secret, hashed = grafana_oidc_pair()
         put(db, group, "grafana/client_secret", secret, replace=True)
         put(db, group, "authelia/grafana_client_secret_hash", hashed, replace=True)
     save_private(db, path)
+    if incomplete:
+        print("Replaced incomplete Grafana OIDC client pair with a matching pair.")
     print("KeePass entries created or retained. Add authelia/users_yml before apply.")
 
 
