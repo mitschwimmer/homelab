@@ -12,7 +12,9 @@ On NixOS, enter a shell with the tools used below (`incus.client` provides the C
 nix-shell -p opentofu incus.client openbao openssl gnupg python3
 ```
 
-The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. The shell snippets below use Bash; if your interactive shell is fish, run `bash` before following them. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, host numbers, and DNS against the **current** host:
+The interactive commands below use **Bash** syntax (`read -rp`, `$(...)`, and `export`). If your `nix-shell` prompt is in fish, run `bash` before continuing. Keep that Bash session open through the OpenBao CLI steps.
+
+The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, addresses, and DNS against the **current** host:
 
 ```sh
 incus storage list measerve:
@@ -45,7 +47,7 @@ incus port-forward measerve:openbao 8200 18200
 Check the printed address against the allocations and leases above before bootstrapping. If an older configuration created TLS for a different IP, or you change the host number, update **only the certificate** using the existing key before retrying. Preserve `openbao-data` and do not initialize OpenBao again:
 
 ```bash
-openbao_ip=$(printf 'local.private_ips.openbao\n' | tofu console | python3 -c 'import json,sys; print(json.load(sys.stdin))')
+read -rp 'Corrected OpenBao IP: ' openbao_ip
 bash scripts/reissue-openbao-cert.sh measerve local "$openbao_ip"
 tofu apply -target=incus_instance.openbao
 ```
@@ -54,7 +56,7 @@ The reissue command keeps the private key. If the server has already been initia
 
 Keep `incus port-forward` running in one terminal. In another, copy the public certificate to workstation **tmpfs** and use the CLI over loopback:
 
-```sh
+```bash
 umask 077
 bao_tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
 incus storage volume file pull measerve:local openbao-data/tls/server.crt "$bao_tmp/server.crt"
@@ -66,7 +68,7 @@ bao operator unseal
 
 Store the three shares and initial root token **off-host**, separately from OpenTofu state; enter a different share at each unseal prompt. Unseal again after a server restart. If CLI status is sealed, that is expected before unseal. Read the root token without shell history or the CLI token helper:
 
-```sh
+```bash
 read -rsp 'OpenBao token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
 bao token lookup
 bao audit enable file file_path=/var/lib/openbao/audit.log
@@ -90,7 +92,7 @@ Use `bao kv put -mount=kv authelia field=@/private/file ...` with **all** fields
 
 With a root session, issue a scoped token, then replace the root token in the environment using the prompt:
 
-```sh
+```bash
 bao token create -policy=deploy-secrets -ttl=1h -no-default-policy
 unset BAO_TOKEN
 read -rsp 'Deployment token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
