@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Copy declared OpenBao KV v2 fields into private Incus volumes.
 
-The OpenTofu output contains names, destinations, and ownership only. Secret
+The OpenTofu manifest contains names, destinations, and ownership only. Secret
 bytes travel through this process and Incus stdin, never command arguments,
 environment variables, local files, or OpenTofu state.
 """
@@ -69,7 +69,10 @@ def main():
     parser.add_argument("services", nargs="*", help="Selected workloads (default: all)")
     args = parser.parse_args()
     try:
-        manifest = json.loads(run(["tofu", "output", "-json", "secret_deployment"]))
+        # Targeted applies create the volumes but do not publish root outputs.
+        # Console evaluates this non-secret local from the current configuration and state.
+        encoded = run(["tofu", "console"], data=b"jsonencode(local.secret_deployment)\n")
+        manifest = json.loads(json.loads(encoded))
         if not isinstance(manifest, dict):
             raise ValueError("invalid secret_deployment output")
         services = args.services or sorted(manifest)

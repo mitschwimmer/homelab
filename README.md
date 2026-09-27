@@ -111,7 +111,7 @@ tofu plan
 tofu apply
 ```
 
-The script reads `tofu output -json secret_deployment`, fetches KV fields and streams them to Incus volumes. Values never enter OpenTofu. Files are mode `0400`, owned by their non-root application UID, in private `0700` volumes mounted read-only. A failed transfer stops deployment; recopy all fields for that service before restarting. Targeted applies above only establish first-boot order; the final full apply reconciles the configuration.
+The script reads the non-secret deployment manifest with `tofu console`, including after the targeted bootstrap applies, then fetches KV fields and streams them to Incus volumes. Secret values never enter OpenTofu. Files are mode `0400`, owned by their non-root application UID, in private `0700` volumes mounted read-only. A failed transfer stops deployment; recopy all fields for that service before restarting. Targeted applies above only establish first-boot order; the final full apply reconciles the configuration.
 
 For rotation, update KV, then `python3 scripts/deploy-secrets.py authelia` and `incus restart measerve:authelia` (substitute the service). KV changes do not automatically update files. Remove obsolete files from the volume after removing their manifest entries.
 

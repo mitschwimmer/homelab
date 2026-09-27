@@ -21,6 +21,17 @@ locals {
   }
 
   secret_workloads = { for service, fields in local.workload_fields : service => fields if length(fields) > 0 }
+
+  secret_deployment = {
+    for service, fields in local.secret_workloads : service => {
+      remote = var.site.incus_remote
+      pool   = var.site.storage_pool
+      volume = incus_storage_volume.workload_secrets[service].name
+      uid    = local.workload_owners[service].uid
+      gid    = local.workload_owners[service].gid
+      fields = fields
+    }
+  }
 }
 
 # Private persistent volumes can be populated while OCI instances are stopped
@@ -39,14 +50,5 @@ resource "incus_storage_volume" "workload_secrets" {
 
 output "secret_deployment" {
   description = "Non-secret destinations consumed by scripts/deploy-secrets.py"
-  value = {
-    for service, fields in local.secret_workloads : service => {
-      remote = var.site.incus_remote
-      pool   = var.site.storage_pool
-      volume = incus_storage_volume.workload_secrets[service].name
-      uid    = local.workload_owners[service].uid
-      gid    = local.workload_owners[service].gid
-      fields = fields
-    }
-  }
+  value       = local.secret_deployment
 }
