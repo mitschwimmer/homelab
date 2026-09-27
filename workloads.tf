@@ -1,6 +1,6 @@
 locals {
-  # Field names and destinations are public configuration. Values are fetched
-  # after OpenTofu creates the volumes; they never enter plans or state.
+  # Field names and destinations are public configuration. Values are loaded
+  # from KeePass by the operator and retained in encrypted OpenTofu state.
   workload_fields = {
     # Keys are destination filenames; values are KV v2 field names.
     authelia = merge({ for field in [
@@ -35,18 +35,15 @@ resource "incus_storage_volume" "workload_secrets" {
     "initial.gid"  = tostring(local.workload_owners[each.key].gid)
     "initial.mode" = "0700"
   }
-}
 
-output "secret_deployment" {
-  description = "Non-secret destinations consumed by scripts/deploy-secrets.py"
-  value = {
-    for service, fields in local.secret_workloads : service => {
-      remote = var.site.incus_remote
-      pool   = var.site.storage_pool
-      volume = incus_storage_volume.workload_secrets[service].name
-      uid    = local.workload_owners[service].uid
-      gid    = local.workload_owners[service].gid
-      fields = fields
+  dynamic "file" {
+    for_each = each.value
+    content {
+      target_path = "/${file.key}"
+      content     = var.workload_secrets[each.key][file.value]
+      uid         = local.workload_owners[each.key].uid
+      gid         = local.workload_owners[each.key].gid
+      mode        = "0400"
     }
   }
 }

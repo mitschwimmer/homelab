@@ -47,7 +47,7 @@ stay on the private network.
 
 Keep user data, keys, and passwords outside Git. The deployment supplies
 private files to read-only workload mounts as described in
-[ADR 0002](0002-openbao-deployment-secrets.md). This ADR records the proxy and
+[ADR 0002](0002-keepass-and-encrypted-state.md). This ADR records the proxy and
 identity choice independently of the secret delivery mechanism.
 
 ## Consequences

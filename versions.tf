@@ -1,6 +1,23 @@
 terraform {
   required_version = ">= 1.7.0"
 
+  encryption {
+    key_provider "pbkdf2" "homelab" {
+      passphrase = var.state_passphrase
+    }
+    method "aes_gcm" "homelab" {
+      keys = key_provider.pbkdf2.homelab
+    }
+    state {
+      method   = method.aes_gcm.homelab
+      enforced = true
+    }
+    plan {
+      method   = method.aes_gcm.homelab
+      enforced = true
+    }
+  }
+
   required_providers {
     incus = {
       source  = "lxc/incus"

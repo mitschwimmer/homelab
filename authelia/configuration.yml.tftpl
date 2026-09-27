@@ -43,7 +43,7 @@ telemetry:
 
 identity_providers:
   oidc:
-    # Private RSA key supplied from OpenBao; Authelia uses it to sign ID tokens.
+    # Private RSA key supplied through the secret volume; Authelia signs ID tokens.
     jwks:
       - key: {{ secret "/var/lib/homelab-secrets/oidc_jwks" | mindent 10 "|" | msquote }}
     # Only members of the existing admins group may complete Grafana's OIDC flow.
