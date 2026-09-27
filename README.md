@@ -42,7 +42,7 @@ An empty OpenTofu state does **not** mean an empty Incus host. Inspect `incus li
 python3 scripts/homelab.py init-secrets
 ```
 
-The script creates `$HOME/.keychains/homelab.kdbx` with owner-only permissions, prompts for a master password, and generates stable random application values, an RSA OIDC signing key, and a separate random state encryption passphrase. Repeating the command retains existing values. Back up the KDBX database and master password independently of state. Do not change `state_passphrase` while state or saved plans encrypted with it still exist.
+The script creates `$HOME/.keychains/homelab.kdbx` with owner-only permissions, prompts for a master password, and generates stable random application values, an RSA OIDC signing key, and a separate random state encryption passphrase. It also invokes the Authelia CLI to generate a matching Grafana OIDC client secret and PBKDF2 hash, and saves both directly in KeePass. Repeating the command retains existing values. It repairs permissions on a database made too permissive by older versions of the script. Back up the KDBX database and master password independently of state. Do not change `state_passphrase` while state or saved plans encrypted with it still exist.
 
 Create a private `users.yml` based on the example. Generate an Argon2 hash for the account password, replace the example hash and email, and keep the `admins` group for a Grafana administrator:
 
@@ -54,15 +54,7 @@ chmod 600 $HOME/.keychains/users.yml
 python3 scripts/homelab.py set authelia/users_yml < $HOME/.keychains/users.yml
 ```
 
-Generate a **matching** Grafana OIDC client secret and PBKDF2 hash with Authelia:
-
-```fish
-authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72 --random.charset rfc3986
-python3 scripts/homelab.py set grafana/client_secret
-python3 scripts/homelab.py set authelia/grafana_client_secret_hash
-```
-
-Copy the CLI's “Random Password” into the first prompt and “Digest” into the second. Input is hidden; values are never shell arguments. `set` also accepts redirected stdin for multiline values. Once the KeePass entry and backup are verified, remove the temporary `users.yml` file if it is no longer needed.
+`set` also accepts redirected stdin for multiline values. Once the KeePass entry and backup are verified, remove the temporary `users.yml` file if it is no longer needed.
 
 If SMTP is configured in `site.auto.tfvars`, add `authelia/smtp_password` with `set`. If Incus metrics are configured, add `prometheus/incus_server_cert`, `prometheus/incus_metrics_cert`, and `prometheus/incus_metrics_key` from private files. The file-based notifier and default Prometheus setup need no optional entries.
 
