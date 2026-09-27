@@ -6,7 +6,7 @@
 ## Context
 
 This homelab runs services on a single IncusOS host. Some services need a
-public HTTPS address, while access to private routes and applications must
+public HTTPS address, while access to private applications must
 require a login and a second factor. The router forwards HTTP and HTTPS to
 one LAN address; the applications and identity service live on an internal
 Incus bridge. The infrastructure is described with OpenTofu and should remain
@@ -32,8 +32,8 @@ Keep Caddy's certificate data in a persistent Incus volume.
 
 Use **Authelia** as the common identity and authorization service on the
 private bridge. Caddy calls its forward-auth endpoint before serving protected
-routes; Authelia defaults to denying unmatched protected requests and applies
-route-specific two-factor policies. Publish the Authelia portal through Caddy
+applications; Authelia defaults to denying unmatched protected requests and applies
+application-specific two-factor policies. Publish the Authelia portal through Caddy
 at `auth.<base_domain>` so users can complete login and enrollment. Use its
 file-backed users and persistent SQLite storage for this small deployment.
 
@@ -41,9 +41,10 @@ For applications that need a user identity within the application, also use
 Authelia as an OpenID Connect provider. Grafana is the first example: Caddy
 checks the `admins` group and second factor at the edge, then Grafana uses
 Authelia OIDC to sign the user in and assign its server administrator role to
-that group. Grafana checks group membership independently. The public health
-endpoint remains unprotected by design; Prometheus and exporter endpoints
-stay on the private network.
+that group. Grafana checks group membership independently. Only
+`auth.<base_domain>` and `grafana.<base_domain>` have public Caddy routes;
+the apex domain has none. Prometheus and exporter endpoints stay on the
+private network.
 
 Keep user data, keys, and passwords outside Git. The deployment supplies
 private files to read-only workload mounts as described in
@@ -53,7 +54,7 @@ identity choice independently of the secret delivery mechanism.
 ## Consequences
 
 - Caddy owns public routing and certificate renewal; Authelia owns login,
-  second-factor checks, and access policies. Adding a protected route requires
+  second-factor checks, and access policies. Adding a protected application requires
   coordinated Caddy and Authelia rules. An application using OIDC additionally
   needs an Authelia client and application-side role mapping.
 - The router reservation, port forwards, public DNS, and any split DNS needed
@@ -61,7 +62,7 @@ identity choice independently of the secret delivery mechanism.
   OpenTofu. The Caddy macvlan NIC cannot be reached directly from the IncusOS
   host; the private bridge is the internal route to Caddy and its upstreams.
 - Caddy depends on Authelia for protected requests. If Authelia is unavailable,
-  those routes cannot authenticate. The public health route can still answer.
+  Grafana requests cannot authenticate.
 - The file user store suits a small set of accounts but requires private,
   operator-managed changes and backups. SMTP must be configured separately
   for enrollment and reset messages to reach an inbox.

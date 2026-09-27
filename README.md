@@ -17,7 +17,7 @@ incus storage list measerve:
 incus network show measerve:incusbr0
 ```
 
-Caddy's LAN MAC needs a DHCP reservation, public DNS, and ports 80/443 forwarded to it. The private host numbers must be distinct and avoid the bridge gateway and broadcast address.
+Caddy's LAN MAC needs a DHCP reservation, public DNS for `auth.<base_domain>` and `grafana.<base_domain>`, and ports 80/443 forwarded to it. Grafana requires a user in the `admins` group and a second factor; the apex domain is not served. The private host numbers must be distinct and avoid the bridge gateway and broadcast address.
 
 ## Start with an empty OpenTofu state
 

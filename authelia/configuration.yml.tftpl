@@ -16,10 +16,6 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
-    - domain: ${base_domain}
-      resources:
-        - '^/private$'
-      policy: two_factor
     # Caddy's forward auth checks this before Grafana's own OIDC login.
     - domain: grafana.${base_domain}
       subject: 'group:admins'
@@ -29,7 +25,7 @@ session:
   cookies:
     - domain: ${base_domain}
       authelia_url: https://auth.${base_domain}
-      default_redirection_url: https://${base_domain}
+      default_redirection_url: https://grafana.${base_domain}
 
 storage:
   local:
