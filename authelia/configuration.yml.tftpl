@@ -1,9 +1,5 @@
 server:
   address: tcp://0.0.0.0:9091/
-  endpoints:
-    authz:
-      forward-auth:
-        implementation: ForwardAuth
 
 log:
   level: info
@@ -12,14 +8,6 @@ authentication_backend:
   file:
     path: /var/lib/homelab-secrets/users.yml
     watch: true
-
-access_control:
-  default_policy: deny
-  rules:
-    # Caddy's forward auth checks this before Grafana's own OIDC login.
-    - domain: grafana.${base_domain}
-      subject: 'group:admins'
-      policy: two_factor
 
 session:
   cookies:

@@ -7,9 +7,6 @@ auth.${base_domain} {
 }
 
 grafana.${base_domain} {
-    forward_auth http://${authelia_ip}:9091 {
-        uri /api/authz/forward-auth
-    }
     reverse_proxy http://${grafana_ip}:3000
 }
 

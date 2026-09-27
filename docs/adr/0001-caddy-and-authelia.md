@@ -30,18 +30,16 @@ private Incus bridge. Reserve its LAN address by MAC in the router, forward
 ports 80 and 443 to it, and point public DNS at the router's public address.
 Keep Caddy's certificate data in a persistent Incus volume.
 
-Use **Authelia** as the common identity and authorization service on the
-private bridge. Caddy calls its forward-auth endpoint before serving protected
-applications; Authelia defaults to denying unmatched protected requests and applies
-application-specific two-factor policies. Publish the Authelia portal through Caddy
-at `auth.<base_domain>` so users can complete login and enrollment. Use its
+Use **Authelia** as the identity and authorization service on the private
+bridge. Publish the Authelia portal through Caddy at `auth.<base_domain>` so
+users can complete login and enrollment. Use its
 file-backed users and persistent SQLite storage for this small deployment.
 
 For applications that need a user identity within the application, also use
-Authelia as an OpenID Connect provider. Grafana is the first example: Caddy
-checks the `admins` group and second factor at the edge, then Grafana uses
-Authelia OIDC to sign the user in and assign its server administrator role to
-that group. Grafana checks group membership independently. Only
+Authelia as an OpenID Connect provider. Grafana uses Authelia OIDC to sign
+users in. Its client authorization policy requires the `admins` group and a
+second factor. Grafana accepts only that group and maps it to the server
+administrator role. Caddy handles TLS and routing without a second login gate. Only
 `auth.<base_domain>` and `grafana.<base_domain>` have public Caddy routes;
 the apex domain has none. Prometheus and exporter endpoints stay on the
 private network.
@@ -54,15 +52,14 @@ identity choice independently of the secret delivery mechanism.
 ## Consequences
 
 - Caddy owns public routing and certificate renewal; Authelia owns login,
-  second-factor checks, and access policies. Adding a protected application requires
-  coordinated Caddy and Authelia rules. An application using OIDC additionally
-  needs an Authelia client and application-side role mapping.
+  second-factor checks, and OIDC authorization policies. An OIDC application
+  needs an Authelia client and application-side access and role mapping.
 - The router reservation, port forwards, public DNS, and any split DNS needed
   to reach the public Authelia URL from private applications remain outside
   OpenTofu. The Caddy macvlan NIC cannot be reached directly from the IncusOS
   host; the private bridge is the internal route to Caddy and its upstreams.
-- Caddy depends on Authelia for protected requests. If Authelia is unavailable,
-  Grafana requests cannot authenticate.
+- Grafana depends on Authelia for login. If Authelia is unavailable, new Grafana
+  sessions cannot authenticate.
 - The file user store suits a small set of accounts but requires private,
   operator-managed changes and backups. SMTP must be configured separately
   for enrollment and reset messages to reach an inbox.
