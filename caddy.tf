@@ -4,10 +4,10 @@ resource "incus_storage_volume" "caddy_etc" {
   remote = var.site.incus_remote
 
   file {
-    content     = templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = var.site.authelia_ip
+    content = templatefile("${path.module}/caddy/Caddyfile", {
+      authelia_ip = local.private_ips.authelia
       base_domain = var.site.base_domain
-      grafana_ip = var.site.grafana_ip
+      grafana_ip  = local.private_ips.grafana
     })
     target_path = "/Caddyfile"
     mode        = "0644"
@@ -33,11 +33,11 @@ resource "incus_instance" "caddy" {
   profiles = []
 
   config = {
-    "boot.autostart"        = "true"
+    "boot.autostart" = "true"
     "user.caddyfile_sha256" = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = var.site.authelia_ip
+      authelia_ip = local.private_ips.authelia
       base_domain = var.site.base_domain
-      grafana_ip = var.site.grafana_ip
+      grafana_ip  = local.private_ips.grafana
     }))
   }
 
@@ -48,9 +48,9 @@ resource "incus_instance" "caddy" {
       command = ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
       environment = {
         CADDYFILE_SHA256 = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-          authelia_ip = var.site.authelia_ip
+          authelia_ip = local.private_ips.authelia
           base_domain = var.site.base_domain
-          grafana_ip = var.site.grafana_ip
+          grafana_ip  = local.private_ips.grafana
         }))
       }
       trigger = "on_change"

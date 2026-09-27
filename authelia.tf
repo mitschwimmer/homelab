@@ -76,7 +76,7 @@ resource "incus_instance" "authelia" {
     type = "nic"
     properties = {
       network        = var.site.private_bridge
-      "ipv4.address" = var.site.authelia_ip
+      "ipv4.address" = local.private_ips.authelia
     }
   }
 

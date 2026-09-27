@@ -1,9 +1,9 @@
 locals {
   prometheus_configuration = templatefile("${path.module}/prometheus/prometheus.yml.tftpl", {
-    prometheus_ip             = var.site.prometheus_ip
+    prometheus_ip             = local.private_ips.prometheus
     private_dns_domain        = var.site.private_dns_domain
-    authelia_ip               = var.site.authelia_ip
-    grafana_ip                = var.site.grafana_ip
+    authelia_ip               = local.private_ips.authelia
+    grafana_ip                = local.private_ips.grafana
     incus_metrics_enabled     = var.incus_metrics != null
     incus_metrics_target      = var.incus_metrics == null ? "" : var.incus_metrics.target
     incus_metrics_server_name = var.incus_metrics == null ? "" : var.incus_metrics.server_name
@@ -70,7 +70,7 @@ resource "incus_instance" "prometheus" {
     type = "nic"
     properties = {
       network        = var.site.private_bridge
-      "ipv4.address" = var.site.prometheus_ip
+      "ipv4.address" = local.private_ips.prometheus
     }
   }
 
