@@ -20,7 +20,7 @@ variable "site" {
     condition = length(distinct(values(var.site.private_host_numbers))) == 4 && alltrue([
       for n in values(var.site.private_host_numbers) : n > 1 && n == floor(n)
     ])
-    error_message = "Choose four distinct whole private host numbers greater than 1. Check the computed IPs against Incus allocations and DHCP leases."
+    error_message = "Choose four distinct whole private host numbers greater than 1, avoiding the bridge gateway and broadcast address."
   }
 }
 

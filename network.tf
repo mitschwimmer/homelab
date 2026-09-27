@@ -12,6 +12,6 @@ locals {
 }
 
 output "private_addresses" {
-  description = "Computed service addresses on the current Incus bridge. Verify they are unallocated before applying."
+  description = "Computed service addresses on the current Incus bridge."
   value       = local.private_ips
 }

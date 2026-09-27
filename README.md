@@ -12,68 +12,66 @@ On NixOS, enter a shell with the tools used below (`incus.client` provides the C
 nix-shell -p opentofu incus.client openbao openssl gnupg python3
 ```
 
-The interactive commands below use **Bash** syntax (`read -rp`, `$(...)`, and `export`). If your `nix-shell` prompt is in fish, run `bash` before continuing. Keep that Bash session open through the OpenBao CLI steps.
+The interactive commands below use **Bash** syntax. If your `nix-shell` prompt is in fish, run `bash` before the later CLI steps. The bootstrap script itself runs under Bash.
 
-The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, addresses, and DNS against the **current** host:
+The commands are `tofu`, `incus`, `bao`, `openssl`, `gpg`, and `python3`. Use your already authenticated Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and verify the pool, bridge, physical NIC, MAC, host numbers, and DNS against the **current** host:
 
 ```sh
 incus storage list measerve:
 incus network show measerve:incusbr0
-incus network list-allocations measerve: --all-projects
-incus network list-leases measerve:incusbr0
 ```
 
-OpenTofu reads the bridge's `ipv4.address` CIDR from Incus and derives four addresses using `private_host_numbers` (offsets from the network address). If you have an older `site.auto.tfvars`, replace its four `*_ip` entries with the `private_host_numbers` block in the updated example. Choose distinct host numbers whose computed addresses are free, outside the DHCP range, and neither the gateway nor the broadcast address. The provider does not select unused addresses for you. Reserve Caddy's LAN MAC in the router; configure public DNS for the base domain, `auth`, and `grafana`, and forward HTTP/HTTPS to Caddy. OpenBao stays on the private bridge. Replace `measerve` and `local` below with your site values.
+The managed bridge needs an `ipv4.address` CIDR, but a new cluster need not have assigned any instance IPs yet. OpenTofu derives four addresses from that CIDR using `private_host_numbers` (offsets from the network address). Choose distinct numbers that do not designate the bridge gateway, network, or broadcast address. If you have an older `site.auto.tfvars`, replace its four `*_ip` entries with the block in the updated example. Reserve Caddy's LAN MAC in the router; configure public DNS for the base domain, `auth`, and `grafana`, and forward HTTP/HTTPS to Caddy. OpenBao stays on the private bridge. Replace `measerve` and `local` below with your site values.
 
 ## Bootstrap OpenBao
 
-The pinned official `openbao/openbao:2.7.0` image runs as UID/GID 900. Incus overrides its development-mode command with `bao server -config=/etc/openbao/server.hcl`. Its Raft data, audit log, and TLS files live in `openbao-data`, separate from the image. A restored volume already has TLS files: **do not generate a new key or initialize it again**.
+The pinned official `openbao/openbao:2.7.0` image runs as UID/GID 900. Incus overrides its development-mode command with `bao server -config=/etc/openbao/server.hcl`. Its Raft data, audit log, and TLS files live in `openbao-data`, separate from the image. A restored volume already has TLS files: **do not generate a new key or initialize it again**. From the repository root, run:
+
+```sh
+bash scripts/bootstrap-openbao.sh
+```
+
+The script creates the volumes, derives OpenBao's IP from Incus, installs TLS after you confirm the volume is new and empty, creates the container, forwards the API temporarily, and initializes and unseals OpenBao with terminal prompts. **Store the printed shares and root token separately off-host** before proceeding. It enables audit logging, KV v2, and the deployment policy, then closes its port forward. Reruns reuse an existing certificate and initialize only when OpenBao reports that it has not been initialized. If TLS creation stopped partway through, the script refuses to overwrite it; inspect the volume before resetting anything. Review each targeted OpenTofu plan before approving it.
+
+If an existing certificate covers a different bridge IP, the script stops without changing the key, Raft data, or certificate. Reissue **only** that certificate for the computed address, then rerun the script:
 
 ```bash
-tofu init
-# Provision volumes only; the server cannot start until TLS exists.
-tofu apply -target=incus_storage_volume.openbao_data \
-  -target=incus_storage_volume.openbao_config \
-  -target=incus_storage_volume.workload_secrets
-# Read the address computed from the current bridge, then check it is unused.
 openbao_ip=$(printf 'local.private_ips.openbao\n' | tofu console | python3 -c 'import json,sys; print(json.load(sys.stdin))')
-printf 'OpenBao address: %s\n' "$openbao_ip"
-# Only for a new, empty openbao-data volume:
-bash scripts/bootstrap-openbao-tls.sh measerve local "$openbao_ip"
-tofu apply -target=incus_instance.openbao
-incus port-forward measerve:openbao 8200 18200
-```
-
-Check the printed address against the allocations and leases above before bootstrapping. If an older configuration created TLS for a different IP, or you change the host number, update **only the certificate** using the existing key before retrying. Preserve `openbao-data` and do not initialize OpenBao again:
-
-```bash
-read -rp 'Corrected OpenBao IP: ' openbao_ip
 bash scripts/reissue-openbao-cert.sh measerve local "$openbao_ip"
-tofu apply -target=incus_instance.openbao
+bash scripts/bootstrap-openbao.sh
 ```
 
-The reissue command keeps the private key. If the server has already been initialized, preserve its Raft data and unseal shares; reissuing its self-signed certificate changes the trust anchor clients must enroll.
+The reissue command keeps the private key. Reissuing the self-signed certificate changes the trust anchor clients must enroll. Do not change the host number on a running OpenBao installation without planning that client update.
 
-Keep `incus port-forward` running in one terminal. In another, copy the public certificate to workstation **tmpfs** and use the CLI over loopback:
+### Retry or start over
+
+For a failed bootstrap, **rerun the script first**. The container is replaceable, but `openbao-data` is a separate persistent volume containing Raft state, TLS key, audit log, and any secrets already stored. OpenTofu state tracks these resources; deleting state entries does not delete the real volumes and can make the next apply conflict with them. If you need to keep an initialized installation, preserve the volume and original unseal shares and follow the [recovery guide](docs/recovery.md).
+
+For a deliberate clean start on a new installation, first decide that **all contents of `openbao-data` can be discarded**. If OpenBao was initialized, this loses its KV data and invalidates its old root token and unseal shares; any workloads relying on it will need their secrets restored or replaced. Back up anything you need. Review and approve this targeted destruction, then run the script again:
+
+```sh
+tofu destroy -target=incus_instance.openbao -target=incus_storage_volume.openbao_data -target=incus_storage_volume.openbao_config
+bash scripts/bootstrap-openbao.sh
+```
+
+This removes the tracked OpenBao instance and its two custom volumes; OpenTofu retains state for other resources. It does not reset IncusOS, the bridge, or other workloads. If a volume exists outside the current state, stop and import or inspect it rather than applying fresh state over it. Never remove the whole state file to restart one service.
+
+### Admin access and backups
+
+For later administration, keep `incus port-forward measerve:openbao 8200 18200` running in one terminal. In another, copy the public certificate to workstation **tmpfs** and use the CLI over loopback:
 
 ```bash
 umask 077
 bao_tmp=$(mktemp -d /dev/shm/openbao-admin.XXXXXX)
 incus storage volume file pull measerve:local openbao-data/tls/server.crt "$bao_tmp/server.crt"
 export BAO_ADDR=https://127.0.0.1:18200 BAO_CACERT="$bao_tmp/server.crt"
-bao operator init -key-shares=3 -key-threshold=2
-bao operator unseal
-bao operator unseal
 ```
 
-Store the three shares and initial root token **off-host**, separately from OpenTofu state; enter a different share at each unseal prompt. Unseal again after a server restart. If CLI status is sealed, that is expected before unseal. Read the root token without shell history or the CLI token helper:
+Store the three shares and initial root token **off-host**, separately from OpenTofu state. Unseal again after a server restart with two different shares. Read the root token without shell history or the CLI token helper when administrative work requires it:
 
 ```bash
 read -rsp 'OpenBao token: ' BAO_TOKEN; printf '\n'; export BAO_TOKEN
 bao token lookup
-bao audit enable file file_path=/var/lib/openbao/audit.log
-bao secrets enable -path=kv -version=2 kv
-bao policy write deploy-secrets openbao/policies/deploy-secrets.hcl
 ```
 
 Take an off-host `bao operator raft snapshot save` and export the `openbao-data` volume, which includes the TLS key. Check that both are restorable before depending on this server. Clear `BAO_TOKEN` and remove `$bao_tmp` when finished. Use short-lived scoped tokens for routine deployments.
