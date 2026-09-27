@@ -5,10 +5,10 @@ data "incus_network" "private" {
 
 locals {
   private_bridge_cidr = data.incus_network.private.config["ipv4.address"]
-  private_ips = {
+  private_ips = merge({
     for service, host_number in var.site.private_host_numbers :
     service => cidrhost(local.private_bridge_cidr, host_number)
-  }
+  }, var.llama == null ? {} : { llama = cidrhost(local.private_bridge_cidr, var.llama.host_number) })
 }
 
 output "private_addresses" {

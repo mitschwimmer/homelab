@@ -7,7 +7,13 @@ locals {
     incus_metrics_enabled     = var.incus_metrics != null
     incus_metrics_target      = var.incus_metrics == null ? "" : var.incus_metrics.target
     incus_metrics_server_name = var.incus_metrics == null ? "" : var.incus_metrics.server_name
-    extra_targets             = var.prometheus_extra_targets
+    extra_targets = concat(var.prometheus_extra_targets, var.llama == null ? [] : (
+      var.llama.enabled ? [{
+        job_name     = "llama"
+        target       = "${local.private_ips.llama}:8080"
+        metrics_path = "/metrics"
+      }] : []
+    ))
   })
 }
 
