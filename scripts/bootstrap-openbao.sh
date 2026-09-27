@@ -162,12 +162,26 @@ printf '\n'
 export BAO_TOKEN
 # Confirm that the token works before configuring audit and KV.
 bao token lookup >/dev/null
-# Fetch the existing audit backends to support resuming an interrupted setup.
-bao audit list -format=json > "$temporary/audits.json"
-# Enable the persistent audit log only if it is not already enabled.
-if ! python3 -c 'import json,sys; sys.exit("file/" not in json.load(open(sys.argv[1])))' "$temporary/audits.json"; then
-  # Store audit entries on the OpenBao data volume.
-  bao audit enable file file_path=/var/lib/openbao/audit.log
+# Start with audit unconfirmed while the single Raft node becomes active.
+audit_ready=false
+# Give the declarative audit device time to appear after unsealing.
+for attempt in {1..15}; do
+  # Check for the file path declared in server.hcl without enabling anything through the API.
+  if bao audit list -format=json > "$temporary/audits.json" && python3 -c 'import json,sys; sys.exit("file/" not in json.load(open(sys.argv[1])))' "$temporary/audits.json"; then
+    # Remember that audit logging is ready before continuing with writes.
+    audit_ready=true
+    # Stop polling when the server reports the expected device.
+    break
+  fi
+  # Allow Raft leader election or startup configuration to complete.
+  sleep 1
+done
+# Refuse to continue if the file audit device never appeared.
+if [[ "$audit_ready" != true ]]; then
+  # Explain how to load the updated declarative configuration after an earlier bootstrap.
+  printf 'File audit did not become available. If the config changed, restart %s:openbao and rerun with your existing shares; otherwise inspect OpenBao logs and Raft status.\n' "$remote" >&2
+  # Preserve Raft, TLS, and the original unseal shares.
+  exit 1
 fi
 # Fetch the existing secrets engines to support resuming an interrupted setup.
 bao secrets list -format=json > "$temporary/secrets.json"
