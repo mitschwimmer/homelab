@@ -44,6 +44,11 @@ administrator role. Caddy handles TLS and routing without a second login gate. O
 the apex domain has none. Prometheus and exporter endpoints stay on the
 private network.
 
+Authelia requires a nonempty proxy `access_control` rule set when the default
+policy is `deny`, even though Caddy does not call its forward-auth endpoint.
+Keep a rule scoped to Grafana so the service can start; the separate OIDC
+authorization policy governs Grafana sign-in.
+
 Keep user data, keys, and passwords outside Git. The deployment supplies
 private files to read-only workload mounts as described in
 [ADR 0002](0002-keepass-and-encrypted-state.md). This ADR records the proxy and

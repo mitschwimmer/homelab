@@ -9,6 +9,15 @@ authentication_backend:
     path: /var/lib/homelab-secrets/users.yml
     watch: true
 
+# Authelia rejects an implicit deny policy without rules, even when Caddy
+# uses only OIDC. This rule is not a second proxy gate for Grafana.
+access_control:
+  default_policy: deny
+  rules:
+    - domain: grafana.${base_domain}
+      subject: 'group:admins'
+      policy: two_factor
+
 session:
   cookies:
     - domain: ${base_domain}
