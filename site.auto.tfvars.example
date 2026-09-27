@@ -22,8 +22,8 @@ site = {
   caddy_mac      = "02:00:00:ca:dd:01"
 
   # OpenTofu reads the bridge's IPv4 CIDR from Incus and applies these offsets
-  # from its network address (for a /24, 13 gives x.x.x.13). Choose distinct,
-  # free addresses outside the DHCP range; see the README before applying.
+  # from its network address (for a /24, 13 gives x.x.x.13). Choose distinct
+  # host numbers that are not the bridge gateway or broadcast address.
   private_host_numbers = {
     authelia   = 10
     openbao    = 13
