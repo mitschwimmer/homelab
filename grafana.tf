@@ -37,9 +37,10 @@ resource "incus_storage_volume" "grafana_dashboards" {
   }
 
   file {
-    content     = local.grafana_dashboard_configuration
-    target_path = "/incus/incus.json"
-    mode        = "0644"
+    content            = local.grafana_dashboard_configuration
+    target_path        = "/incus/incus.json"
+    mode               = "0644"
+    create_directories = true
   }
 }
 
