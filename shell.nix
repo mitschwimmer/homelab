@@ -5,6 +5,7 @@ pkgs.mkShell {
     pkgs.opentofu
     pkgs.incus.client
     pkgs.authelia
+    pkgs.openssl
     (pkgs.python3.withPackages (ps: with ps; [ pykeepass cryptography ]))
   ];
 }

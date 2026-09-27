@@ -10,7 +10,7 @@ On NixOS, start the repository's `shell.nix` from **fish**:
 nix-shell --run fish
 ```
 
-The Nix shell provides `tofu`, `incus`, `authelia`, and a Python interpreter with PyKeePass and `cryptography`; no pip installation is needed. Run the remaining commands inside it from this repository's root. Use the already authenticated `measerve` Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and set your actual pool, bridge, LAN interface, MAC, host numbers, and domain. Remove the former `openbao` host number if updating an older site file. Check the current host:
+The Nix shell provides `tofu`, `incus`, `authelia`, `openssl`, and a Python interpreter with PyKeePass and `cryptography`; no pip installation is needed. Run the remaining commands inside it from this repository's root. Use the already authenticated `measerve` Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and set your actual pool, bridge, LAN interface, MAC, host numbers, and domain. Remove the former `openbao` host number if updating an older site file. Check the current host:
 
 ```fish
 incus storage list measerve:
@@ -70,5 +70,40 @@ python3 scripts/homelab.py tofu apply
 ```
 
 Review the plan for only the resources you intend to create. The provider writes mode `0400` secret files with each application's UID/GID into private `0700` volumes, mounted read-only in each OCI instance. Encrypted state and saved plans still contain those values, and Incus volumes and their backups contain the plaintext. File encryption at rest does not hide values from an operator running `tofu show -json`, `tofu state pull`, verbose provider logging, or captured process environments. Treat such output as secret material.
+
+## Collect Incus instance metrics
+
+The IncusOS default Incus application listens on port 8443. Check the address of the `measerve` remote and confirm that its metrics endpoint responds with `incus_` metrics:
+
+```fish
+incus remote list
+incus query measerve:/1.0/metrics | head -n 10
+```
+
+Create a dedicated metrics certificate and enroll only its public certificate with Incus. Do this once; keep the key private and backed up. The Nix shell includes OpenSSL:
+
+```fish
+mkdir -p $HOME/.keychains/incus-metrics
+chmod 700 $HOME/.keychains/incus-metrics
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 -nodes -days 3650 -subj '/CN=homelab-prometheus' -keyout $HOME/.keychains/incus-metrics/metrics.key -out $HOME/.keychains/incus-metrics/metrics.crt
+chmod 600 $HOME/.keychains/incus-metrics/metrics.key
+incus config trust add-certificate measerve: $HOME/.keychains/incus-metrics/metrics.crt --type=metrics
+```
+
+The Incus client keeps the trusted server certificate at `$HOME/.config/incus/servercerts/measerve.crt` for a user-configured remote. Inspect its subject alternative names to choose `server_name` for the Prometheus TLS check:
+
+```fish
+openssl x509 -in $HOME/.config/incus/servercerts/measerve.crt -noout -ext subjectAltName
+```
+
+Import the three files into KeePass. The metrics certificate is public, but keeping the certificate and key together simplifies recovery:
+
+```fish
+python3 scripts/homelab.py set prometheus/incus_server_cert < $HOME/.config/incus/servercerts/measerve.crt
+python3 scripts/homelab.py set prometheus/incus_metrics_cert < $HOME/.keychains/incus-metrics/metrics.crt
+python3 scripts/homelab.py set prometheus/incus_metrics_key < $HOME/.keychains/incus-metrics/metrics.key
+```
+
+In ignored `site.auto.tfvars`, set `incus_metrics = { target = "<measerve LAN IP>:8443", server_name = "<DNS name or IP in the certificate SAN>" }`. The target must be reachable from the Prometheus instance on the private bridge; `incus remote list` shows the management endpoint to start from. Use an exact SAN from the certificate for `server_name`. Then run `python3 scripts/homelab.py tofu plan` and `python3 scripts/homelab.py tofu apply`. The plan should add the private `prometheus-secrets` volume and replace Prometheus to mount it. In Grafana Explore, query `up{job="incus"}`; it should return `1`. Then try `incus_cpu_seconds_total` to confirm instance data is present. Prometheus scrapes this endpoint over TLS every 60 seconds, so wait for a scrape after apply.
 
 To rotate a value, update its KeePass entry with `set`, run `python3 scripts/homelab.py tofu plan` and `python3 scripts/homelab.py tofu apply`, then restart the affected workload if it does not reload the file. Back up the KeePass database, encrypted state, IncusOS pool keys, Incus application, and workload volumes as described in [recovery](docs/recovery.md). A push to GitHub does not deploy measerve.

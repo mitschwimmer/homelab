@@ -46,6 +46,6 @@ site = {
 #   { job_name = "immich-microservices", target = "immich.incus:8082", metrics_path = "/metrics" },
 # ]
 
-# To collect IncusOS instance and host metrics, follow the Incus TLS setup in
-# the README, then set the reachable host:port and its certificate SAN name:
+# To collect Incus instance metrics, follow the certificate setup in the
+# README, then set the reachable host:port and a name in its certificate SAN:
 # incus_metrics = { target = "192.168.1.100:8443", server_name = "incusos" }
