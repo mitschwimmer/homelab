@@ -118,10 +118,12 @@ First check the actual GPU and an available pool on measerve. If the IncusOS GPU
 
 ```fish
 incus admin os application list measerve:
-incus admin os application add measerve: -d '{"name":"gpu-support"}'
+incus admin os application add measerve:gpu-support
 incus info measerve: --resources
 incus storage list measerve:
 ```
+
+Run the `add` command only if `gpu-support` is absent from the application list. Before enabling the llama instance, confirm the AMD card reports the `amdgpu` driver and a DRM render node in `incus info --resources`; a PCI entry alone is insufficient for ROCm. If those are still missing after installing the firmware, inspect the IncusOS kernel logs before applying the workload.
 
 Add `llama` to your ignored `site.auto.tfvars`, replacing the placeholders with values from measerve. Choose an existing pool with enough room for models; `site.storage_pool` still holds the instance root disk. Set `enabled = false` initially. The host number must differ from Authelia, Prometheus, and Grafana:
 
