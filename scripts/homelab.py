@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+import tempfile
 
 from pykeepass import PyKeePass, create_database
 
@@ -51,7 +52,37 @@ def put(db, group, title, value, *, replace=False):
     return True
 
 
-def init(db, group):
+def save_private(db, path):
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".homelab-", delete=False) as tmp:
+        temporary = Path(tmp.name)
+        try:
+            db.save(tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def grafana_oidc_pair():
+    command = ["authelia", "crypto", "hash", "generate", "pbkdf2", "--variant", "sha512",
+               "--random", "--random.length", "72", "--random.charset", "rfc3986"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise ValueError("Authelia could not generate the Grafana OIDC client secret")
+    lines = dict(line.split(": ", 1) for line in result.stdout.splitlines()
+                 if line.startswith(("Random Password: ", "Digest: ")))
+    secret, digest = lines.get("Random Password"), lines.get("Digest")
+    if not secret or len(secret) != 72 or not digest or not digest.startswith("$pbkdf2-sha512$"):
+        raise ValueError("unexpected output from Authelia's PBKDF2 generator")
+    return secret, digest
+
+
+def init(db, group, path):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -72,8 +103,16 @@ def init(db, group):
                                 serialization.PrivateFormat.PKCS8,
                                 serialization.NoEncryption()).decode()
         put(db, group, "authelia/oidc_jwks", pem)
-    db.save()
-    print("KeePass entries created or retained. Add users_yml and the Grafana OIDC client pair before apply.")
+    client = entry(db, group, "grafana/client_secret")
+    digest = entry(db, group, "authelia/grafana_client_secret_hash")
+    if bool(client and client.password) != bool(digest and digest.password):
+        raise ValueError("Grafana OIDC client pair is incomplete; restore both entries or remove the partial entry and rerun init-secrets")
+    if not client or not client.password:
+        secret, hashed = grafana_oidc_pair()
+        put(db, group, "grafana/client_secret", secret, replace=True)
+        put(db, group, "authelia/grafana_client_secret_hash", hashed, replace=True)
+    save_private(db, path)
+    print("KeePass entries created or retained. Add authelia/users_yml before apply.")
 
 
 def load_values(db, group, *, require_all):
@@ -116,6 +155,7 @@ def invoke(db, group, args):
 
 
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", default=DEFAULT_DATABASE, type=Path,
                         help="KeePass KDBX file (default: ~/.keychains/homelab.kdbx)")
@@ -137,16 +177,17 @@ def main():
             if len(password) < 16:
                 raise ValueError("use a master password of at least 16 characters")
             db = create_database(str(path), password=password)
-            os.chmod(path, 0o600)
         else:
             if not path.is_file():
                 raise ValueError("database does not exist; run init-secrets first")
+            if path.stat().st_uid != os.getuid():
+                raise ValueError("database must be owned by the current user")
             if path.stat().st_mode & 0o077:
-                raise ValueError("database must be readable only by its owner (chmod 600)")
+                os.chmod(path, 0o600)
             db = PyKeePass(str(path), password=getpass.getpass("KeePass master password: "))
         group = group_for(db)
         if args.command == "init-secrets":
-            init(db, group)
+            init(db, group, path)
         elif args.command == "set":
             allowed = {f"{service}/{field}" for service, fields in FIELDS.items() for field in fields}
             if args.name not in allowed:
@@ -156,7 +197,7 @@ def main():
             if not value:
                 raise ValueError("secret is empty")
             put(db, group, args.name, value, replace=True)
-            db.save()
+            save_private(db, path)
             print(f"Saved {args.name}.")
         else:
             if not args.args or args.args[0].startswith("-"):
