@@ -14,9 +14,13 @@ resource "terraform_data" "grafana_provisioning" {
 }
 
 resource "incus_storage_volume" "grafana_provisioning" {
-  name   = "grafana-provisioning"
+  # The old volume was created with Incus's 0711 default. Grafana cannot list it.
+  name   = "grafana-provisioning-readable"
   pool   = var.site.storage_pool
   remote = var.site.incus_remote
+  config = {
+    "initial.mode" = "0755"
+  }
 
   file {
     content     = local.grafana_datasource_configuration
@@ -29,6 +33,9 @@ resource "incus_storage_volume" "grafana_dashboards" {
   name   = "grafana-dashboards"
   pool   = var.site.storage_pool
   remote = var.site.incus_remote
+  config = {
+    "initial.mode" = "0755"
+  }
 
   file {
     content     = file("${path.module}/grafana/dashboards.yml")
@@ -41,6 +48,7 @@ resource "incus_storage_volume" "grafana_dashboards" {
     target_path        = "/incus/incus.json"
     mode               = "0644"
     create_directories = true
+    directory_mode     = "0755"
   }
 }
 

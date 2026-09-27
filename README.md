@@ -73,7 +73,7 @@ Review the plan for only the resources you intend to create. The provider writes
 
 ## Collect Incus instance metrics
 
-The Prometheus data source is already provisioned through `grafana/datasources.yml.tftpl`. This repository also provisions the **Dashboards → Homelab → Incus instances** dashboard from `grafana/incus.json`, showing scrape status and per-instance CPU, memory, network, and disk use. Grafana reads both definitions when OpenTofu applies this configuration; dashboard changes in the repository take effect after an apply. To troubleshoot an empty dashboard, query `up{job="incus"}` in Grafana Explore and wait for a scrape.
+The Prometheus data source is provisioned through `grafana/datasources.yml.tftpl`. This repository also provisions the **Dashboards → Homelab → Incus instances** dashboard from `grafana/incus.json`, showing scrape status and per-instance CPU, memory, network, and disk use. Grafana reads both definitions when OpenTofu applies this configuration; dashboard changes in the repository take effect after an apply. The provisioning volumes must be readable and listable by Grafana's UID 472. This change recreates the older data source provisioning volume, whose default mode prevented Grafana from discovering its YAML file. To troubleshoot an empty dashboard after applying, query `up{job="incus"}` in Grafana Explore and wait for a scrape.
 
 The IncusOS default Incus application listens on port 8443. Check the address of the `measerve` remote and confirm that its metrics endpoint responds with `incus_` metrics:
 
