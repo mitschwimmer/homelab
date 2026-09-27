@@ -55,6 +55,31 @@ variable "incus_metrics" {
   default = null
 }
 
+variable "llama" {
+  description = "Optional ROCm llama.cpp server. Set enabled=false to create and populate the model volume before starting the instance."
+  type = object({
+    enabled      = bool
+    host_number  = number
+    storage_pool = string
+    gpu_pci      = string
+    model_file   = string
+    context_size = number
+  })
+  default = null
+
+  validation {
+    condition = var.llama == null ? true : (
+      var.llama.host_number > 1 &&
+      var.llama.host_number == floor(var.llama.host_number) &&
+      can(regex("^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$", var.llama.gpu_pci)) &&
+      can(regex("^[^/]+\\.gguf$", var.llama.model_file)) &&
+      var.llama.context_size >= 512 && var.llama.context_size == floor(var.llama.context_size) &&
+      trimspace(var.llama.storage_pool) != ""
+    )
+    error_message = "Set a whole host number greater than 1, an existing storage pool, a full GPU PCI address, a GGUF filename, and a whole context size of at least 512."
+  }
+}
+
 variable "prometheus_extra_targets" {
   description = "Additional private HTTP Prometheus exporters, for example the Immich API and microservices endpoints once deployed."
   type = list(object({

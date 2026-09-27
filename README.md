@@ -109,3 +109,54 @@ python3 scripts/homelab.py set prometheus/incus_metrics_key < $HOME/.keychains/i
 In ignored `site.auto.tfvars`, set `incus_metrics = { target = "<measerve LAN IP>:8443", server_name = "<DNS name in the certificate SAN>" }`. The target must be reachable from the Prometheus instance on the private bridge; `incus remote list` shows the management endpoint to start from. IncusOS may issue a certificate whose only non-loopback SAN is a UUID-shaped DNS name. In that case, use that exact DNS name for `server_name` while keeping the reachable LAN IP in `target`. The two values serve different purposes: Prometheus connects to `target` and checks the server certificate against `server_name`. The `127.0.0.1` and `::1` SANs are only suitable when connecting over loopback. Then run `python3 scripts/homelab.py tofu plan` and `python3 scripts/homelab.py tofu apply`. The plan should add the private `prometheus-secrets` volume and replace Prometheus to mount it. In Grafana Explore, query `up{job="incus"}`; it should return `1`. Then try `incus_cpu_seconds_total` to confirm instance data is present. Prometheus scrapes this endpoint over TLS every 60 seconds, so wait for a scrape after apply.
 
 To rotate a value, update its KeePass entry with `set`, run `python3 scripts/homelab.py tofu plan` and `python3 scripts/homelab.py tofu apply`, then restart the affected workload if it does not reload the file. Back up the KeePass database, encrypted state, IncusOS pool keys, Incus application, and workload volumes as described in [recovery](docs/recovery.md). A push to GitHub does not deploy measerve.
+
+## Serve a GGUF with llama.cpp and ROCm
+
+This optional workload runs the pinned upstream `server-rocm` OCI image as UID/GID 1000. It receives one GPU's DRM render node through an Incus `gpu` device and `/dev/kfd` through a `unix-char` device. The API listens on port 8080 at its **private bridge address only**; there is no public Caddy route. Other workloads on that bridge can reach it. Prometheus scrapes `/metrics` when it is enabled. The models live in a separate `llama-models` volume and do not enter OpenTofu state.
+
+First check the actual GPU and an available pool on measerve. If the IncusOS GPU firmware application is missing, install it and verify that Incus then detects the card. Its firmware does not replace the host kernel driver. In fish:
+
+```fish
+incus admin os application list measerve:
+incus admin os application add measerve: -d '{"name":"gpu-support"}'
+incus info measerve: --resources
+incus storage list measerve:
+```
+
+Add `llama` to your ignored `site.auto.tfvars`, replacing the placeholders with values from measerve. Choose an existing pool with enough room for models; `site.storage_pool` still holds the instance root disk. Set `enabled = false` initially. The host number must differ from Authelia, Prometheus, and Grafana:
+
+```hcl
+llama = {
+  enabled      = false
+  host_number  = 13
+  storage_pool = "<existing-pool>"
+  gpu_pci      = "<full-GPU-PCI-address>"
+  model_file   = "my-model.Q4_K_M.gguf"
+  context_size = 8192
+}
+```
+
+Then create only the model volume:
+
+```fish
+python3 scripts/homelab.py tofu plan
+python3 scripts/homelab.py tofu apply
+```
+
+The first plan should add `llama-models`, with no `llama` instance. Obtain the desired GGUF separately, verify its published SHA-256 checksum, and push it directly into the volume. Replace the local path, pool, and filename with your chosen values:
+
+```fish
+incus storage volume file push /path/to/my-model.Q4_K_M.gguf measerve:local llama-models/my-model.Q4_K_M.gguf --uid 0 --gid 0 --mode 0644
+```
+
+Set `enabled = true`, then plan and apply again. The plan should create the `llama` instance and update Prometheus's scrape configuration. The ROCm image is pinned to a build tag in `llama.tf`; change it deliberately after testing an upgrade. The server uses the selected GGUF, the configured context size, and `--n-gpu-layers all`. A model larger than available VRAM may fail to load; select a fitting quantization or adjust the offload setting in `llama.tf`.
+
+```fish
+python3 scripts/homelab.py tofu plan
+python3 scripts/homelab.py tofu apply
+incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/health
+incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/metrics
+incus console measerve:llama --show-log
+```
+
+Confirm in the server log that the HIP backend found the intended GPU and that model layers were offloaded. A healthy `/health` response alone does not establish GPU use. In Grafana Explore, `up{job="llama"}` should become `1` after the scrape. The server has no API key because it has no published route; add authentication and an intentional access path before exposing it to clients outside the private bridge. Back up `llama-models` if retaining downloaded models matters. OpenTofu prevents accidental destruction of that volume; changing its pool requires a deliberate volume migration.
