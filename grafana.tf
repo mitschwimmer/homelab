@@ -2,21 +2,53 @@ locals {
   grafana_datasource_configuration = templatefile("${path.module}/grafana/datasources.yml.tftpl", {
     prometheus_ip = local.private_ips.prometheus
   })
+  grafana_dashboard_configuration = file("${path.module}/grafana/incus.json")
 }
 
 resource "terraform_data" "grafana_provisioning" {
-  triggers_replace = sha256(local.grafana_datasource_configuration)
+  triggers_replace = sha256(join("\n", [
+    local.grafana_datasource_configuration,
+    file("${path.module}/grafana/dashboards.yml"),
+    local.grafana_dashboard_configuration,
+  ]))
 }
 
 resource "incus_storage_volume" "grafana_provisioning" {
-  name   = "grafana-provisioning"
+  # The old volume was created with Incus's 0711 default. Grafana cannot list it.
+  name   = "grafana-provisioning-readable"
   pool   = var.site.storage_pool
   remote = var.site.incus_remote
+  config = {
+    "initial.mode" = "0755"
+  }
 
   file {
     content     = local.grafana_datasource_configuration
     target_path = "/datasources.yml"
     mode        = "0644"
+  }
+}
+
+resource "incus_storage_volume" "grafana_dashboards" {
+  name   = "grafana-dashboards"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
+  config = {
+    "initial.mode" = "0755"
+  }
+
+  file {
+    content     = file("${path.module}/grafana/dashboards.yml")
+    target_path = "/provider.yml"
+    mode        = "0644"
+  }
+
+  file {
+    content            = local.grafana_dashboard_configuration
+    target_path        = "/incus/incus.json"
+    mode               = "0644"
+    create_directories = true
+    directory_mode     = "0755"
   }
 }
 
@@ -106,6 +138,17 @@ resource "incus_instance" "grafana" {
       path     = "/etc/grafana/provisioning/datasources"
       pool     = var.site.storage_pool
       source   = incus_storage_volume.grafana_provisioning.name
+      readonly = "true"
+    }
+  }
+
+  device {
+    name = "dashboards"
+    type = "disk"
+    properties = {
+      path     = "/etc/grafana/provisioning/dashboards"
+      pool     = var.site.storage_pool
+      source   = incus_storage_volume.grafana_dashboards.name
       readonly = "true"
     }
   }
