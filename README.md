@@ -44,9 +44,13 @@ python3 scripts/homelab.py init-secrets
 
 The script creates `$HOME/.keychains/homelab.kdbx` with owner-only permissions, prompts for a master password, and generates stable random application values, an RSA OIDC signing key, and a separate random state encryption passphrase. Repeating the command retains existing values. Back up the KDBX database and master password independently of state. Do not change `state_passphrase` while state or saved plans encrypted with it still exist.
 
-Create a private `users.yml` based on `authelia/users.yml.example`, including an Argon2 password hash and an `admins` user. Import it from a private file:
+Create a private `users.yml` based on the example. Generate an Argon2 hash for the account password, replace the example hash and email, and keep the `admins` group for a Grafana administrator:
 
 ```fish
+authelia crypto hash generate argon2
+cp authelia/users.yml.example $HOME/.keychains/users.yml
+chmod 600 $HOME/.keychains/users.yml
+# Edit $HOME/.keychains/users.yml privately, then import it:
 python3 scripts/homelab.py set authelia/users_yml < $HOME/.keychains/users.yml
 ```
 
