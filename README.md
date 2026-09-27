@@ -31,7 +31,19 @@ The pinned official `openbao/openbao:2.7.0` image runs as UID/GID 900. Incus ove
 bash scripts/bootstrap-openbao.sh
 ```
 
-The script creates the volumes, derives OpenBao's IP from Incus, installs TLS after you confirm the volume is new and empty, creates the container, forwards the API temporarily, and initializes and unseals OpenBao with terminal prompts. **Store the printed shares and root token separately off-host** before proceeding. It enables audit logging, KV v2, and the deployment policy, then closes its port forward. Reruns reuse an existing certificate and initialize only when OpenBao reports that it has not been initialized. If TLS creation stopped partway through, the script refuses to overwrite it; inspect the volume before resetting anything. Review each targeted OpenTofu plan before approving it.
+The script creates the volumes, derives OpenBao's IP from Incus, installs TLS after you confirm the volume is new and empty, creates the container, forwards the API temporarily, and initializes and unseals OpenBao with terminal prompts. **Store the printed shares and root token separately off-host** before proceeding. The server configuration declares a persistent file audit device; the script verifies it, enables KV v2, and installs the deployment policy, then closes its port forward. Reruns reuse an existing certificate and initialize only when OpenBao reports that it has not been initialized. If TLS creation stopped partway through, the script refuses to overwrite it; inspect the volume before resetting anything. Review each targeted OpenTofu plan before approving it.
+
+### Recover from the audit API error
+
+If an earlier bootstrap stopped after unsealing with `cannot enable audit device via API`, OpenBao is already initialized. Keep the original shares, token, TLS files, and `openbao-data`. Apply the updated server configuration, restart the container to load its declarative audit stanza, and rerun the script:
+
+```sh
+tofu apply -target=incus_storage_volume.openbao_config
+incus restart measerve:openbao
+bash scripts/bootstrap-openbao.sh
+```
+
+The restart seals OpenBao again. Enter **two different existing shares** when the script prompts; it will not call `bao operator init` again. Substitute your Incus remote for `measerve`.
 
 If an existing certificate covers a different bridge IP, the script stops without changing the key, Raft data, or certificate. Reissue **only** that certificate for the computed address, then rerun the script:
 

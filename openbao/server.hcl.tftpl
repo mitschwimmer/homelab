@@ -14,3 +14,9 @@ listener "tcp" {
   tls_cert_file = "/var/lib/openbao/tls/server.crt"
   tls_key_file = "/var/lib/openbao/tls/server.key"
 }
+
+audit "file" "file" {
+  options {
+    file_path = "/var/lib/openbao/audit.log"
+  }
+}
