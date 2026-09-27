@@ -1,2 +1,0 @@
-pykeepass==4.2.0
-cryptography>=42,<47

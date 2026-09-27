@@ -26,12 +26,6 @@ terraform {
   }
 }
 
-# A state-only marker lets the one-time migration write encrypted state without
-# creating or modifying any Incus resource.
-resource "terraform_data" "state_encryption" {
-  input = "state-encryption-v1"
-}
-
 provider "incus" {
   default_remote = var.site.incus_remote
 

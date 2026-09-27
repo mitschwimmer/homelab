@@ -6,7 +6,7 @@ An IncusOS system backup does not contain all application data. Back up each lay
 | --- | --- |
 | IncusOS | `incus admin os system backup` and storage-pool encryption/recovery keys. |
 | Incus application | `incus admin os application backup incus`, plus exports of persistent volumes and any instance rootfs data. |
-| Operator secrets | KeePass `.kdbx` database and its master password, backed up independently. It contains the state passphrase and application values. |
+| Operator secrets | KeePass `$HOME/.keychains/homelab.kdbx` database and its master password, backed up independently. It contains the state passphrase and application values. |
 | Deployment | The matching encrypted OpenTofu state, `site.auto.tfvars`, and any saved encrypted plans. Protect any old plaintext state copies. |
 | Workloads | Application data and custom volumes. Secret volumes also contain plaintext application values; they can be recreated from KeePass by applying the configuration to an empty host. |
 

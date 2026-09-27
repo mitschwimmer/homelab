@@ -7,15 +7,14 @@ import json
 import os
 from pathlib import Path
 import secrets
-import shutil
 import subprocess
 import sys
-import tempfile
 
 from pykeepass import PyKeePass, create_database
 
 
 GROUP = "homelab"
+DEFAULT_DATABASE = Path.home() / ".keychains" / "homelab.kdbx"
 REQUIRED = {
     "authelia": (
         "session_secret", "storage_encryption_key", "reset_password_jwt_secret",
@@ -74,7 +73,7 @@ def init(db, group):
                                 serialization.NoEncryption()).decode()
         put(db, group, "authelia/oidc_jwks", pem)
     db.save()
-    print("KeePass entries created or retained. Add users_yml and the Grafana OIDC client pair before migration/apply.")
+    print("KeePass entries created or retained. Add users_yml and the Grafana OIDC client pair before apply.")
 
 
 def load_values(db, group, *, require_all):
@@ -99,76 +98,33 @@ def load_values(db, group, *, require_all):
     return state.password, result
 
 
-def invoke(db, group, args, *, cwd=None):
+def invoke(db, group, args):
+    state_file = Path("terraform.tfstate")
+    if state_file.exists():
+        try:
+            state_envelope = json.loads(state_file.read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError("cannot identify local state format; inspect it privately") from error
+        if "encrypted_data" not in state_envelope:
+            raise ValueError("plaintext state is still in this checkout; archive it before starting the new state")
     state, values = load_values(db, group, require_all=args[0] != "init")
     env = os.environ.copy()
     env["TF_VAR_state_passphrase"] = state
     env["TF_VAR_workload_secrets"] = json.dumps(values)
     env.pop("TF_ENCRYPTION", None)
-    return subprocess.run(["tofu", *args], env=env, cwd=cwd, check=False).returncode
-
-
-def migrate(db, group):
-    source = Path(__file__).resolve().parent.parent
-    state = source / "terraform.tfstate"
-    if not state.is_file():
-        raise ValueError("no local terraform.tfstate to migrate")
-    if (source / ".terraform/environment").exists():
-        raise ValueError("migration supports only the default local workspace")
-    original = (source / "versions.tf").read_text()
-    enforced = "      enforced = true"
-    state_block = "    state {\n      method   = method.aes_gcm.homelab\n      enforced = true\n    }"
-    if original.count(enforced) != 2 or original.count(state_block) != 1:
-        raise ValueError("unexpected encryption configuration; inspect versions.tf")
-    migration = original.replace(
-        "    encryption {", "    encryption {\n    method \"unencrypted\" \"migration\" {}", 1
-    ).replace(state_block, '''    state {
-      method   = method.aes_gcm.homelab
-      enforced = false
-      fallback { method = method.unencrypted.migration }
-    }''', 1)
-
-    # Work from a private staging directory so plaintext fallback never exists
-    # in the checkout. The local backend still writes to the original state.
-    with tempfile.TemporaryDirectory(prefix="homelab-state-migration-") as temporary:
-        stage = Path(temporary)
-        stage.chmod(0o700)
-        for file in source.glob("*.tf"):
-            shutil.copy2(file, stage / file.name)
-        for file in source.glob("*.auto.tfvars"):
-            shutil.copy2(file, stage / file.name)
-        for folder in ("authelia", "caddy", "grafana", "prometheus"):
-            shutil.copytree(source / folder, stage / folder)
-        shutil.copy2(source / ".terraform.lock.hcl", stage / ".terraform.lock.hcl")
-        (stage / "versions.tf").write_text(migration)
-        (stage / "backend.tf").write_text(
-            'terraform {\n  backend "local" {\n    path = '
-            + json.dumps(str(state)) + '\n  }\n}\n'
-        )
-        result = invoke(db, group, ["init", "-input=false"], cwd=stage)
-        if result:
-            return result
-        result = invoke(db, group, ["apply", "-target=terraform_data.state_encryption"], cwd=stage)
-        if result:
-            return result
-        # The encrypted state is a JSON envelope; never print its contents.
-        envelope = json.loads(state.read_text())
-        if "encrypted_data" not in envelope:
-            raise ValueError("state was not encrypted; keep the migration backup and stop")
-        print("State is encrypted. The normal OpenTofu configuration now reads it without a fallback.")
-        return 0
+    return subprocess.run(["tofu", *args], env=env, check=False).returncode
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", required=True, type=Path, help="KeePass KDBX file (outside this checkout)")
+    parser.add_argument("--database", default=DEFAULT_DATABASE, type=Path,
+                        help="KeePass KDBX file (default: ~/.keychains/homelab.kdbx)")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init-secrets", help="create database and stable generated secrets")
-    set_parser = commands.add_parser("set", help="read one secret from stdin into KeePass")
+    set_parser = commands.add_parser("set", help="prompt for one secret or read it from stdin")
     set_parser.add_argument("name", help="service/field, for example authelia/users_yml")
     run_parser = commands.add_parser("tofu", help="run OpenTofu with KeePass values")
     run_parser.add_argument("args", nargs=argparse.REMAINDER)
-    commands.add_parser("migrate-state", help="one-time plaintext state migration via refresh-only apply")
     args = parser.parse_args()
 
     try:
@@ -195,16 +151,13 @@ def main():
             allowed = {f"{service}/{field}" for service, fields in FIELDS.items() for field in fields}
             if args.name not in allowed:
                 raise ValueError("unknown secret name")
-            if sys.stdin.isatty():
-                raise ValueError("pipe a private file into stdin; do not enter secrets in shell arguments")
-            value = sys.stdin.read().rstrip("\n")
+            value = (getpass.getpass(f"{args.name}: ") if sys.stdin.isatty()
+                     else sys.stdin.read().rstrip("\n"))
             if not value:
                 raise ValueError("secret is empty")
             put(db, group, args.name, value, replace=True)
             db.save()
             print(f"Saved {args.name}.")
-        elif args.command == "migrate-state":
-            return migrate(db, group)
         else:
             if not args.args or args.args[0].startswith("-"):
                 raise ValueError("supply a tofu subcommand")
