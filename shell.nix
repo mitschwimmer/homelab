@@ -6,6 +6,6 @@ pkgs.mkShell {
     pkgs.incus.client
     pkgs.authelia
     pkgs.openssl
-    (pkgs.python3.withPackages (ps: with ps; [ pykeepass cryptography ]))
+    (pkgs.python3.withPackages (ps: with ps; [ pykeepass cryptography huggingface-hub ]))
   ];
 }
