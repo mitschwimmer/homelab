@@ -208,9 +208,15 @@ llama = {
   storage_pool = "<existing-pool>"
   gpu_pci      = "<full-GPU-PCI-address>"
   model_file   = "my-model.Q4_K_M.gguf"
-  context_size = 8192
+  context_size = 49152
+  parallel     = 1
+  speculative_type = "draft-mtp"
+  draft_max        = 2
+  reasoning_effort = "medium"
 }
 ```
+
+These tuning values are also the defaults when omitted. `draft-mtp` requires a GGUF containing a compatible MTP head; use `speculative_type = "none"` for other models. `reasoning_effort` is passed to the model's chat template and requires a template that honors it. Qwen3.8 supports `low`, `medium`, and `xhigh`; `medium` keeps thinking enabled without the extra xhigh instruction. Clients can override the server default per request.
 
 Then create only the model volume:
 
@@ -242,3 +248,21 @@ incus console measerve:llama --show-log
 ```
 
 Confirm in the server log that the HIP backend found the intended GPU and that model layers were offloaded. A healthy `/health` response alone does not establish GPU use. In Grafana Explore, `up{job="llama"}` should become `1` after the scrape. The server has no API key because it has no published route; add authentication and an intentional access path before exposing it to clients outside the private bridge. Back up `llama-models` if retaining downloaded models matters. OpenTofu prevents accidental destruction of that volume; changing its pool requires a deliberate volume migration.
+
+### Apply the measured Qwen3.8 tuning
+
+The image is pinned to `server-rocm-b11277`, verified against the upstream ROCm image manifest on 2026-09-30. The published ROCm image follows a daily build schedule and can lag the latest binary nightly. The benchmarks below used the previous b10362 image; re-run them after upgrading. Port 8080 is explicit to keep the Open WebUI and Prometheus endpoints stable. Review the image-change plan for an instance replacement; the separate, protected `llama-models` volume retains the GGUF.
+
+On the RX 9060 XT 16 GB with `Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller.gguf` and ROCm build b10362, the short-prompt, greedy 256-token completion test measured approximately 16.4 tokens/s without MTP, 24.2 with one draft token, 28.6 with two, and 27.2 with three. Reducing context from about 50k to 8k or slots from four to one did not materially change non-MTP speed. The MTP measurements used 8k context and one slot. The configured default is now 48 Ki tokens (49152) for longer conversations; this context with MTP has not yet been measured. Check startup allocations and health, then validate representative chat and coding requests. The earlier approximately 50k/four-slot configuration was close to VRAM capacity even without MTP.
+
+When updating an existing installation, set `context_size = 49152` in your ignored `site.auto.tfvars` (or remove that field to use the default). Keep your actual model filename, PCI address, pool and host number. An existing explicit context value overrides the default. The other tuning fields above can be omitted to use the defaults. Then run the wrapper's `tofu plan` and `tofu apply` commands; the configuration persists the settings previously changed with `incus config set`.
+
+After applying, restart the application to load the new environment and wait for `/health` to succeed:
+
+```fish
+incus restart measerve:llama
+incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/health
+incus console measerve:llama --show-log
+```
+
+Check that the startup log shows one slot, a 49152-token context, and MTP initialization. Review the memory-fit estimate and GPU buffer allocations; successful layer offload alone does not establish enough VRAM headroom. For medium effort, Qwen3.8's example chat template should no longer include the xhigh reasoning instruction. Effort changes affect templated chat requests (including Open WebUI); the raw `/completion` speed test does not exercise the chat template or reasoning effort.
