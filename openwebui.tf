@@ -89,7 +89,8 @@ resource "incus_instance" "openwebui" {
     "environment.ENABLE_OLLAMA_API"                = "false"
     "environment.ENABLE_OPENAI_API"                = "true"
     "environment.OPENAI_API_BASE_URL"              = "http://${try(local.private_ips.llama, "127.0.0.1")}:8080/v1"
-    "environment.OPENAI_API_KEY"                   = ""
+    # The image defaults OPENAI_API_KEY to empty. Incus removes empty config
+    # values, so explicitly setting it causes a provider consistency error.
     "environment.CORS_ALLOW_ORIGIN"                = "https://${var.openwebui.hostname}"
     "environment.FORWARDED_ALLOW_IPS"              = "${local.private_bridge_cidr}"
   }
