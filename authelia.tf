@@ -6,6 +6,8 @@ locals {
     smtp_sender        = var.authelia_smtp == null ? "" : var.authelia_smtp.sender
     smtp_check_address = var.authelia_smtp == null ? "" : var.authelia_smtp.startup_check_address
     base_domain        = var.site.base_domain
+    openwebui_enabled  = var.openwebui != null
+    openwebui_hostname = var.openwebui == null ? "" : var.openwebui.hostname
   })
 }
 

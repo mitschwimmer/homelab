@@ -43,6 +43,7 @@ class ProvidedSecret:
 class GeneratedSecret:
     name: str
     generate: Callable[[], str]
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class GeneratedBundle:
     name: str
     fields: tuple[SecretRef, ...]
     generate: Callable[[], Mapping[SecretRef, str]]
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -109,14 +111,10 @@ class SecretCatalog:
                     for name in specification.fields:
                         yield SecretRef(app.name, name), False
                 else:
-                    required = (
-                        isinstance(specification, GeneratedSecret)
-                        or specification.required
-                    )
-                    yield SecretRef(app.name, specification.name), required
+                    yield SecretRef(app.name, specification.name), specification.required
         for bundle in self.integrations:
             for ref in bundle.fields:
-                yield ref, True
+                yield ref, bundle.required
 
     def allowed_names(self) -> set[str]:
         return {ref.name for ref, _ in self.fields()}
@@ -191,9 +189,11 @@ def generate_oidc_signing_key() -> str:
 
 GRAFANA_CLIENT_SECRET = SecretRef("grafana", "client_secret")
 GRAFANA_CLIENT_HASH = SecretRef("authelia", "grafana_client_secret_hash")
+OPENWEBUI_CLIENT_SECRET = SecretRef("openwebui", "client_secret")
+OPENWEBUI_CLIENT_HASH = SecretRef("authelia", "openwebui_client_secret_hash")
 
 
-def generate_grafana_oidc_pair() -> Mapping[SecretRef, str]:
+def generate_oidc_pair(secret_ref: SecretRef, hash_ref: SecretRef) -> Mapping[SecretRef, str]:
     command = [
         "authelia", "crypto", "hash", "generate", "pbkdf2",
         "--variant", "sha512", "--random", "--random.length", "72",
@@ -202,7 +202,7 @@ def generate_grafana_oidc_pair() -> Mapping[SecretRef, str]:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         # Authelia output can contain credentials; do not include it in errors.
-        raise ValueError("Authelia could not generate the Grafana OIDC client secret")
+        raise ValueError(f"Authelia could not generate the {secret_ref.application} OIDC client secret")
     values = {}
     for line in result.stdout.splitlines():
         label, separator, value = line.partition(": ")
@@ -214,7 +214,7 @@ def generate_grafana_oidc_pair() -> Mapping[SecretRef, str]:
     digest = values.get("Digest", "")
     if len(secret) != 72 or not digest.startswith("$pbkdf2-sha512$"):
         raise ValueError("unexpected output from Authelia's PBKDF2 generator")
-    return {GRAFANA_CLIENT_SECRET: secret, GRAFANA_CLIENT_HASH: digest}
+    return {secret_ref: secret, hash_ref: digest}
 
 
 # partial binds generator parameters without generating a value at import time.
@@ -232,6 +232,9 @@ APPLICATIONS = (
         GeneratedSecret("admin_password", partial(secrets.token_urlsafe, 48)),
         GeneratedSecret("secret_key", partial(secrets.token_urlsafe, 48)),
     )),
+    ApplicationSecrets("openwebui", (
+        GeneratedSecret("secret_key", partial(secrets.token_urlsafe, 48), required=False),
+    )),
     ApplicationSecrets("prometheus", (
         OptionalBundle("incus_metrics_credentials", (
             "incus_server_cert", "incus_metrics_cert", "incus_metrics_key",
@@ -241,7 +244,12 @@ APPLICATIONS = (
 GENERATED_BUNDLES = (
     GeneratedBundle(
         "grafana_oidc", (GRAFANA_CLIENT_SECRET, GRAFANA_CLIENT_HASH),
-        generate_grafana_oidc_pair,
+        partial(generate_oidc_pair, GRAFANA_CLIENT_SECRET, GRAFANA_CLIENT_HASH),
+    ),
+    GeneratedBundle(
+        "openwebui_oidc", (OPENWEBUI_CLIENT_SECRET, OPENWEBUI_CLIENT_HASH),
+        partial(generate_oidc_pair, OPENWEBUI_CLIENT_SECRET, OPENWEBUI_CLIENT_HASH),
+        required=False,
     ),
 )
 CATALOG = SecretCatalog(APPLICATIONS, GENERATED_BUNDLES)
