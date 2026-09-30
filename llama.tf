@@ -21,18 +21,25 @@ resource "incus_storage_volume" "llama_models" {
 resource "incus_instance" "llama" {
   count    = var.llama == null ? 0 : (var.llama.enabled ? 1 : 0)
   name     = "llama"
-  image    = "oci-ghcr:ggml-org/llama.cpp:server-rocm-b10362"
+  image    = "oci-ghcr:ggml-org/llama.cpp:server-rocm-b11277"
   remote   = var.site.incus_remote
   profiles = []
 
   config = {
-    "boot.autostart"                          = "true"
-    "boot.autorestart"                        = "true"
-    "oci.uid"                                 = "1000"
-    "oci.gid"                                 = "1000"
+    "boot.autostart"                         = "true"
+    "boot.autorestart"                       = "true"
+    "oci.uid"                                = "1000"
+    "oci.gid"                                = "1000"
     "environment.LLAMA_ARG_MODEL"            = "/models/${var.llama.model_file}"
+    "environment.LLAMA_ARG_PORT"             = "8080"
     "environment.LLAMA_ARG_CTX_SIZE"         = tostring(var.llama.context_size)
     "environment.LLAMA_ARG_N_GPU_LAYERS"     = "all"
+    "environment.LLAMA_ARG_N_PARALLEL"       = tostring(var.llama.parallel)
+    "environment.LLAMA_ARG_SPEC_TYPE"        = var.llama.speculative_type
+    "environment.LLAMA_ARG_SPEC_DRAFT_N_MAX" = tostring(var.llama.draft_max)
+    "environment.LLAMA_ARG_CHAT_TEMPLATE_KWARGS" = jsonencode({
+      reasoning_effort = var.llama.reasoning_effort
+    })
     "environment.LLAMA_ARG_ENDPOINT_METRICS" = "1"
     "environment.LLAMA_ARG_UI"               = "false"
   }
