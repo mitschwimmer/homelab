@@ -11,13 +11,14 @@ cd /path/to/homelab
 nix-shell --run fish
 ```
 
-Replace `/path/to/homelab` with your checkout's path. This starts a child fish shell with `tofu`, `incus`, `authelia`, `openssl`, and a Python interpreter with PyKeePass and `cryptography` on its search path. Nix supplies the Python dependencies: there is no `.venv` to activate and no pip installation is needed. Enter this shell again whenever you open a new terminal; leave it with `exit`.
+Replace `/path/to/homelab` with your checkout's path. This starts a child fish shell with `tofu`, `incus`, `authelia`, `openssl`, the Hugging Face CLI (`hf`), and a Python interpreter with PyKeePass and `cryptography` on its search path. Nix supplies the Python dependencies: there is no `.venv` to activate and no pip installation is needed. Enter this shell again whenever you open a new terminal; leave it with `exit`.
 
 Inside the shell, check that Python can load the dependencies and display the wrapper's commands:
 
 ```fish
 python3 -c 'import sys, pykeepass, cryptography; print(sys.executable)'
 python3 scripts/homelab.py --help
+hf --help
 ```
 
 The first command should print a Python path under `/nix/store/` without an import error. If you get `ModuleNotFoundError`, make sure you entered the Nix shell from the repository root. If another project's virtual environment is active, leave it with `deactivate` before entering this shell.
@@ -178,7 +179,13 @@ python3 scripts/homelab.py tofu plan
 python3 scripts/homelab.py tofu apply
 ```
 
-The first plan should add `llama-models`, with no `llama` instance. Obtain the desired GGUF separately, verify its published SHA-256 checksum, and push it directly into the volume. Replace the local path, pool, and filename with your chosen values:
+The first plan should add `llama-models`, with no `llama` instance. Download the desired GGUF using the Nix shell's Hugging Face CLI. Replace the repository ID, filename, and local directory with your chosen values; specify the filename to avoid downloading the entire model repository:
+
+```fish
+hf download <owner/model-repository> my-model.Q4_K_M.gguf --local-dir /path/to/models
+```
+
+For a private or gated repository, first run `hf auth login` and ensure your account has access to the model. See the [Hugging Face CLI documentation](https://huggingface.co/docs/huggingface_hub/en/guides/cli). Verify the file's published SHA-256 checksum, then push it directly into the volume. Replace the local path, pool, and filename with your chosen values:
 
 ```fish
 incus storage volume file push /path/to/my-model.Q4_K_M.gguf measerve:local llama-models/my-model.Q4_K_M.gguf --uid 0 --gid 0 --mode 0644
