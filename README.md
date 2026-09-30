@@ -4,13 +4,31 @@ OpenTofu manages measerve networking, OCI instances, persistent volumes, and pri
 
 ## Enter the Nix shell
 
-On NixOS, start the repository's `shell.nix` from **fish**:
+On NixOS, change to your homelab checkout (the directory containing `shell.nix`) and enter the environment from **fish**:
 
 ```fish
+cd /path/to/homelab
 nix-shell --run fish
 ```
 
-The Nix shell provides `tofu`, `incus`, `authelia`, `openssl`, and a Python interpreter with PyKeePass and `cryptography`; no pip installation is needed. Run the remaining commands inside it from this repository's root. Use the already authenticated `measerve` Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and set your actual pool, bridge, LAN interface, MAC, host numbers, and domain. Remove the former `openbao` host number if updating an older site file. Check the current host:
+Replace `/path/to/homelab` with your checkout's path. This starts a child fish shell with `tofu`, `incus`, `authelia`, `openssl`, and a Python interpreter with PyKeePass and `cryptography` on its search path. Nix supplies the Python dependencies: there is no `.venv` to activate and no pip installation is needed. Enter this shell again whenever you open a new terminal; leave it with `exit`.
+
+Inside the shell, check that Python can load the dependencies and display the wrapper's commands:
+
+```fish
+python3 -c 'import sys, pykeepass, cryptography; print(sys.executable)'
+python3 scripts/homelab.py --help
+```
+
+The first command should print a Python path under `/nix/store/` without an import error. If you get `ModuleNotFoundError`, make sure you entered the Nix shell from the repository root. If another project's virtual environment is active, leave it with `deactivate` before entering this shell.
+
+For a single command without an interactive shell, run this from the repository root:
+
+```fish
+nix-shell --run 'python3 scripts/homelab.py tofu plan'
+```
+
+Run the remaining commands inside the interactive Nix shell from this repository's root. Use the already authenticated `measerve` Incus remote. Copy `site.auto.tfvars.example` to ignored `site.auto.tfvars` and set your actual pool, bridge, LAN interface, MAC, host numbers, and domain. Remove the former `openbao` host number if updating an older site file. Check the current host:
 
 ```fish
 incus storage list measerve:
@@ -18,6 +36,21 @@ incus network show measerve:incusbr0
 ```
 
 Caddy's LAN MAC needs a DHCP reservation, public DNS for `auth.<base_domain>` and `grafana.<base_domain>`, and ports 80/443 forwarded to it. Grafana signs users in through Authelia OIDC: only members of the `admins` group with a second factor can complete authorization, and Grafana assigns them its server administrator role. The apex domain is not served. The private host numbers must be distinct and avoid the bridge gateway and broadcast address.
+
+## Resume work on an existing installation
+
+If KeePass and encrypted OpenTofu state are already set up, keep using that database, state, and your ignored `site.auto.tfvars`. The state migration below is a one-time setup step; do not archive your current state when resuming work. OpenTofu loads `site.auto.tfvars` automatically from the repository root.
+
+After entering the Nix shell, validate and review your changes:
+
+```fish
+python3 scripts/homelab.py tofu validate
+python3 scripts/homelab.py tofu plan
+```
+
+If OpenTofu reports that initialization is required (for example, in a fresh checkout with your existing state restored), run `python3 scripts/homelab.py tofu init` first. The wrapper prompts for your KeePass master password on each invocation and supplies the secrets and state encryption passphrase to OpenTofu.
+
+After reviewing the plan, apply it with `python3 scripts/homelab.py tofu apply` and review its confirmation prompt. For the GPU workload, continue with [the llama.cpp setup](#serve-a-gguf-with-llamacpp-and-rocm): recording `gpu_pci` alone does not upload a model. Keep `llama.enabled = false` until the model volume exists and the configured GGUF has been uploaded, then enable the instance and plan/apply again.
 
 ## Start with an empty OpenTofu state
 
