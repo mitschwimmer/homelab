@@ -49,3 +49,8 @@ site = {
 # To collect Incus instance metrics, follow the certificate setup in the
 # README, then set the reachable host:port and the exact DNS SAN from its certificate:
 # incus_metrics = { target = "192.168.1.100:8443", server_name = "<DNS SAN from measerve.crt>" }
+
+# Optional Open WebUI. First configure and enable llama, initialize the new
+# KeePass secrets, and point this hostname's public DNS at Caddy (see README).
+# The host number must differ from llama and all private_host_numbers above.
+# openwebui = { hostname = "ai.archaic.work", host_number = 14 }

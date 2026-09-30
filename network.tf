@@ -8,7 +8,8 @@ locals {
   private_ips = merge({
     for service, host_number in var.site.private_host_numbers :
     service => cidrhost(local.private_bridge_cidr, host_number)
-  }, var.llama == null ? {} : { llama = cidrhost(local.private_bridge_cidr, var.llama.host_number) })
+    }, var.llama == null ? {} : { llama = cidrhost(local.private_bridge_cidr, var.llama.host_number) },
+  var.openwebui == null ? {} : { openwebui = cidrhost(local.private_bridge_cidr, var.openwebui.host_number) })
 }
 
 output "private_addresses" {

@@ -10,6 +10,20 @@ grafana.${base_domain} {
     reverse_proxy http://${grafana_ip}:3000
 }
 
+%{ if openwebui_enabled ~}
+${openwebui_hostname} {
+    reverse_proxy http://${openwebui_ip}:8080 {
+        # Open WebUI authenticates using OIDC, never client-supplied identity headers.
+        header_up -X-Forwarded-User
+        header_up -X-Forwarded-Email
+        header_up -X-Forwarded-Groups
+        header_up -Remote-User
+        header_up -Remote-Email
+        header_up -Remote-Groups
+    }
+}
+%{ endif ~}
+
 # Listen on the internal bridge too; do not forward this port from the router.
 :9180 {
     metrics /metrics

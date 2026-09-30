@@ -1,14 +1,21 @@
+locals {
+  caddy_configuration = templatefile("${path.module}/caddy/Caddyfile", {
+    authelia_ip        = local.private_ips.authelia
+    base_domain        = var.site.base_domain
+    grafana_ip         = local.private_ips.grafana
+    openwebui_enabled  = var.openwebui != null
+    openwebui_hostname = var.openwebui == null ? "" : var.openwebui.hostname
+    openwebui_ip       = try(local.private_ips.openwebui, "")
+  })
+}
+
 resource "incus_storage_volume" "caddy_etc" {
   name   = "caddy-etc"
   pool   = var.site.storage_pool
   remote = var.site.incus_remote
 
   file {
-    content = templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = local.private_ips.authelia
-      base_domain = var.site.base_domain
-      grafana_ip  = local.private_ips.grafana
-    })
+    content     = local.caddy_configuration
     target_path = "/Caddyfile"
     mode        = "0644"
   }
@@ -33,12 +40,8 @@ resource "incus_instance" "caddy" {
   profiles = []
 
   config = {
-    "boot.autostart" = "true"
-    "user.caddyfile_sha256" = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-      authelia_ip = local.private_ips.authelia
-      base_domain = var.site.base_domain
-      grafana_ip  = local.private_ips.grafana
-    }))
+    "boot.autostart"        = "true"
+    "user.caddyfile_sha256" = sha256(local.caddy_configuration)
   }
 
   # A volume file update does not make the running Caddy process reload.
@@ -47,11 +50,7 @@ resource "incus_instance" "caddy" {
     "reload-caddy" = {
       command = ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"]
       environment = {
-        CADDYFILE_SHA256 = sha256(templatefile("${path.module}/caddy/Caddyfile", {
-          authelia_ip = local.private_ips.authelia
-          base_domain = var.site.base_domain
-          grafana_ip  = local.private_ips.grafana
-        }))
+        CADDYFILE_SHA256 = sha256(local.caddy_configuration)
       }
       trigger = "on_change"
     }

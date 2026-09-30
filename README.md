@@ -144,6 +144,46 @@ In ignored `site.auto.tfvars`, set `incus_metrics = { target = "<measerve LAN IP
 
 To rotate a value, update its KeePass entry with `set`, run `python3 scripts/homelab.py tofu plan` and `python3 scripts/homelab.py tofu apply`, then restart the affected workload if it does not reload the file. Back up the KeePass database, encrypted state, IncusOS pool keys, Incus application, and workload volumes as described in [recovery](docs/recovery.md). A push to GitHub does not deploy measerve.
 
+## Publish Open WebUI with Authelia OIDC
+
+Open WebUI is optional. It runs the pinned `v0.11.4` upstream image, connects to llama.cpp's private OpenAI-compatible `/v1` API, and stores users, chats, and uploads in `openwebui-data`. Caddy terminates HTTPS for `ai.archaic.work`. The llama.cpp API itself remains private. A working WebUI health check does not establish that llama.cpp can serve a model; verify backend health before testing chat.
+
+Login uses the existing `https://auth.<base_domain>` Authelia provider, with authorization-code flow, S256 PKCE, and a confidential client. The application hostname can be on a different domain from Authelia; do not change `site.base_domain` just to add it. Authelia allows only `admins` with a second factor to authorize this client, and Open WebUI maps that group to its administrator role. Password login and local signup are disabled; OAuth account creation is enabled. Environment configuration remains authoritative even after a database exists. The [Authelia integration guide](https://www.authelia.com/integration/openid-connect/clients/open-webui/) documents this flow.
+
+Point `ai.archaic.work`'s public A record (and AAAA only if IPv6 routing works) at the router's public address. Existing ports 80/443 must reach Caddy. The browser and the Open WebUI instance must also reach Authelia's public HTTPS URL; check DNS and NAT loopback/split DNS if discovery or token exchange fails. Keep TLS verification enabled.
+
+In ignored `site.auto.tfvars`, add the following, choosing a host number distinct from all existing workloads and the bridge gateway/broadcast:
+
+```hcl
+openwebui = {
+  hostname    = "ai.archaic.work"
+  host_number = 14
+}
+```
+
+The `llama` configuration must exist and have `enabled = true`. Run these commands from the repository root in its Nix shell:
+
+```fish
+python3 scripts/homelab.py init-secrets
+python3 scripts/homelab.py tofu validate
+python3 scripts/homelab.py tofu plan
+python3 scripts/homelab.py tofu apply
+```
+
+`init-secrets` retains complete existing credentials and creates the Open WebUI session key and matching OIDC secret/hash pair in KeePass. Back up the updated database. The secret volumes hold private files; a small startup script reads them into the process environment because Open WebUI does not support an `OAUTH_CLIENT_SECRET_FILE` option. Values do not enter Incus configuration or startup arguments. They remain accessible to privileged operators and in encrypted state and private volume backups, as with the other workloads. An incomplete OIDC pair is regenerated together; rotating an existing pair requires updating both entries and restarting both applications.
+
+Expect the plan to add Open WebUI, its data/config/secrets volumes, and the Authelia client secret file; it also replaces Authelia to load the new client and reloads Caddy with the new route. Review any other changes separately, including temporary llama debugging settings. This repository does not apply infrastructure changes on push.
+
+After applying:
+
+```fish
+incus exec measerve:openwebui -- curl -fsS http://127.0.0.1:8080/health
+incus exec measerve:openwebui -- curl -fsS https://auth.<base_domain>/.well-known/openid-configuration
+incus exec measerve:openwebui -- curl -fsS http://<llama-private-IP>:8080/v1/models
+```
+
+Replace the placeholders with your configured domain and the llama address from `python3 scripts/homelab.py tofu output private_addresses`. Open `https://ai.archaic.work`, complete Authelia login with an `admins` account and a second factor, and send a chat message. Verify a non-admin account cannot authorize the client and that no password signup/login path is usable. Test streaming and reload the page to confirm chat persistence. For failures, inspect `incus console measerve:openwebui --show-log` and the Authelia/Caddy logs. Back up `openwebui-data` before image upgrades; it contains personal conversations and uploads, and database migrations may affect downgrade compatibility. The volume has destruction protection and survives instance replacement.
+
 ## Serve a GGUF with llama.cpp and ROCm
 
 This optional workload runs the pinned upstream `server-rocm` OCI image as UID/GID 1000. It receives one GPU's DRM render node through an Incus `gpu` device and `/dev/kfd` through a `unix-char` device. The API listens on port 8080 at its **private bridge address only**; there is no public Caddy route. Other workloads on that bridge can reach it. Prometheus scrapes `/metrics` when it is enabled. The models live in a separate `llama-models` volume and do not enter OpenTofu state.

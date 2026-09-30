@@ -80,6 +80,24 @@ variable "llama" {
   }
 }
 
+variable "openwebui" {
+  description = "Optional public Open WebUI with Authelia OIDC and the private llama.cpp backend."
+  type = object({
+    hostname    = optional(string, "ai.archaic.work")
+    host_number = number
+  })
+  default = null
+
+  validation {
+    condition = var.openwebui == null ? true : (
+      var.openwebui.host_number > 1 &&
+      var.openwebui.host_number == floor(var.openwebui.host_number) &&
+      can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.openwebui.hostname))
+    )
+    error_message = "Set a whole host number greater than 1 and a lowercase DNS hostname."
+  }
+}
+
 variable "prometheus_extra_targets" {
   description = "Additional private HTTP Prometheus exporters, for example the Immich API and microservices endpoints once deployed."
   type = list(object({

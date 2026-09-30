@@ -7,8 +7,10 @@ locals {
       "session_secret", "storage_encryption_key", "reset_password_jwt_secret",
       "oidc_hmac_secret", "oidc_jwks", "grafana_client_secret_hash"
       ] : field => field }, { "users.yml" = "users_yml" },
+      var.openwebui == null ? {} : { "openwebui_client_secret_hash" = "openwebui_client_secret_hash" },
     var.authelia_smtp == null ? {} : { "smtp_password" = "smtp_password" })
-    grafana = { for field in ["client_secret", "admin_password", "secret_key"] : field => field }
+    grafana   = { for field in ["client_secret", "admin_password", "secret_key"] : field => field }
+    openwebui = var.openwebui == null ? {} : { for field in ["client_secret", "secret_key"] : field => field }
     prometheus = var.incus_metrics == null ? {} : { for field in [
       "incus_server_cert", "incus_metrics_cert", "incus_metrics_key"
     ] : field => field }
@@ -17,6 +19,7 @@ locals {
   workload_owners = {
     authelia   = { uid = 1000, gid = 1000 }
     grafana    = { uid = 472, gid = 0 }
+    openwebui  = { uid = 0, gid = 0 }
     prometheus = { uid = 65534, gid = 65534 }
   }
 
@@ -40,10 +43,19 @@ resource "incus_storage_volume" "workload_secrets" {
     for_each = each.value
     content {
       target_path = "/${file.key}"
-      content     = var.workload_secrets[each.key][file.value]
+      content     = try(var.workload_secrets[each.key][file.value], "")
       uid         = local.workload_owners[each.key].uid
       gid         = local.workload_owners[each.key].gid
       mode        = "0400"
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for field in values(each.value) : try(length(var.workload_secrets[each.key][field]) > 0, false)
+      ])
+      error_message = "Required workload secrets are missing. Run python3 scripts/homelab.py init-secrets and populate any user-provided entries before applying."
     }
   }
 }
