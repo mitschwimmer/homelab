@@ -7,3 +7,4 @@ users:
     groups:
       - family
       - admins
+      - ai-users

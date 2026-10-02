@@ -22,3 +22,5 @@ secrets/
 users.yml
 authelia-secret*/
 monitoring-secrets*/
+node_modules/
+__pycache__/

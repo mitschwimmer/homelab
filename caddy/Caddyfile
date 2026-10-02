@@ -24,6 +24,16 @@ ${openwebui_hostname} {
 }
 %{ endif ~}
 
+%{ if pi_enabled ~}
+${pi_hostname} {
+    forward_auth http://${authelia_ip}:9091 {
+        uri /api/authz/forward-auth
+        copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+    }
+    reverse_proxy http://${pi_ip}:3001
+}
+%{ endif ~}
+
 # Listen on the internal bridge too; do not forward this port from the router.
 :9180 {
     metrics /metrics
