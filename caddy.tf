@@ -6,6 +6,9 @@ locals {
     openwebui_enabled  = var.openwebui != null
     openwebui_hostname = var.openwebui == null ? "" : var.openwebui.hostname
     openwebui_ip       = try(local.private_ips.openwebui, "")
+    pi_enabled         = var.pi != null
+    pi_hostname        = local.pi_hostname
+    pi_ip              = try(local.private_ips.pi, "")
   })
 }
 

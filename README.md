@@ -1,6 +1,6 @@
 # Homelab
 
-OpenTofu manages measerve networking, OCI instances, persistent volumes, and private workload files. A KeePass database at `$HOME/.keychains/homelab.kdbx` holds application secrets and a separate state encryption passphrase. `scripts/homelab.py` unlocks it and invokes OpenTofu, which encrypts state and saved plans with AES-GCM. See [ADR 0002](docs/adr/0002-keepass-and-encrypted-state.md).
+OpenTofu manages measerve networking, OCI instances, the optional Pi VM, persistent volumes, and private workload files. A KeePass database at `$HOME/.keychains/homelab.kdbx` holds application secrets and a separate state encryption passphrase. `scripts/homelab.py` unlocks it and invokes OpenTofu, which encrypts state and saved plans with AES-GCM. See [ADR 0002](docs/adr/0002-keepass-and-encrypted-state.md).
 
 ## Enter the Nix shell
 
@@ -148,7 +148,7 @@ To rotate a value, update its KeePass entry with `set`, run `python3 scripts/hom
 
 Open WebUI is optional. It runs the pinned `v0.11.4` upstream image, connects to llama.cpp's private OpenAI-compatible `/v1` API, and stores users, chats, and uploads in `openwebui-data`. Caddy terminates HTTPS for `ai.archaic.work`. The llama.cpp API itself remains private. A working WebUI health check does not establish that llama.cpp can serve a model; verify backend health before testing chat.
 
-Login uses the existing `https://auth.<base_domain>` Authelia provider, with authorization-code flow, S256 PKCE, and a confidential client. The application hostname can be on a different domain from Authelia; do not change `site.base_domain` just to add it. Authelia allows only `admins` with a second factor to authorize this client, and Open WebUI maps that group to its administrator role. Password login and local signup are disabled; OAuth account creation is enabled. Environment configuration remains authoritative even after a database exists. The [Authelia integration guide](https://www.authelia.com/integration/openid-connect/clients/open-webui/) documents this flow.
+Login uses the existing `https://auth.<base_domain>` Authelia provider, with authorization-code flow, S256 PKCE, and a confidential client. The application hostname can be on a different domain from Authelia; do not change `site.base_domain` just to add it. Authelia allows only `ai-users` with a second factor to authorize this client. Open WebUI admits that group as ordinary users and independently maps `admins` to its administrator role. An administrator therefore needs both groups to use Open WebUI. Password login and local signup are disabled; OAuth account creation is enabled. Environment configuration remains authoritative even after a database exists. The [Authelia integration guide](https://www.authelia.com/integration/openid-connect/clients/open-webui/) documents this flow.
 
 Point `ai.archaic.work`'s public A record (and AAAA only if IPv6 routing works) at the router's public address. Existing ports 80/443 must reach Caddy. The browser and the Open WebUI instance must also reach Authelia's public HTTPS URL; check DNS and NAT loopback/split DNS if discovery or token exchange fails. Keep TLS verification enabled.
 
@@ -182,7 +182,59 @@ incus exec measerve:openwebui -- curl -fsS https://auth.<base_domain>/.well-know
 incus exec measerve:openwebui -- curl -fsS http://<llama-private-IP>:8080/v1/models
 ```
 
-Replace the placeholders with your configured domain and the llama address from `python3 scripts/homelab.py tofu output private_addresses`. Open `https://ai.archaic.work`, complete Authelia login with an `admins` account and a second factor, and send a chat message. Verify a non-admin account cannot authorize the client and that no password signup/login path is usable. Test streaming and reload the page to confirm chat persistence. For failures, inspect `incus console measerve:openwebui --show-log` and the Authelia/Caddy logs. Back up `openwebui-data` before image upgrades; it contains personal conversations and uploads, and database migrations may affect downgrade compatibility. The volume has destruction protection and survives instance replacement.
+Replace the placeholders with your configured domain and the llama address from `python3 scripts/homelab.py tofu output private_addresses`. Open `https://ai.archaic.work`, complete Authelia login with an `ai-users` account and a second factor, and send a chat message. Verify an account without `ai-users` cannot authorize the client, an `ai-users` account without `admins` is an ordinary user, and an account with both groups is an administrator and that no password signup/login path is usable. Test streaming and reload the page to confirm chat persistence. For failures, inspect `incus console measerve:openwebui --show-log` and the Authelia/Caddy logs. Back up `openwebui-data` before image upgrades; it contains personal conversations and uploads, and database migrations may affect downgrade compatibility. The volume has destruction protection and survives instance replacement.
+
+## Share AI access through Authelia
+
+The `ai-users` group grants access to Open WebUI and Pi. Authelia file-backend groups are defined by membership, so add `ai-users` to each intended user's `groups` list in your private `users.yml`; no separate group directory is needed. The example includes it for Henner. Keep `admins` for Grafana and Open WebUI administration. Admins need `ai-users` as well to use either AI frontend.
+
+Import the updated private user file into KeePass, then plan/apply through the wrapper:
+
+```fish
+python3 scripts/homelab.py set authelia/users_yml < $HOME/.keychains/users.yml
+python3 scripts/homelab.py tofu plan
+python3 scripts/homelab.py tofu apply
+```
+
+For an existing Open WebUI installation, this changes its OAuth admission rule and Authelia's OIDC authorization policy. Sign out and sign in to verify the new mapping; existing application sessions are not a substitute for testing a fresh authorization. Group changes do not retroactively terminate existing Open WebUI sessions. Disable/revoke existing application sessions when removing access immediately is required.
+
+## Run shared Pi in an Incus VM
+
+Pi is optional and runs inside a Debian 13 cloud VM with its own kernel, as an ordinary `pi` user without sudo. It uses the existing workload bridge and its normal internet access; no Pi-specific network ACL is installed. The VM has no host-directory mounts or Incus credentials. `pi-agent` persists conversations and `pi-workspace` persists `/workspace`; both are protected against destruction. All `ai-users` share the same conversation, workspace and model selection.
+
+The startup code uses Pi's SDK to keep the service headless, loads only the pinned web extension and built-in Code Mode/tool discovery, and resumes the most recent conversation on restart. Enabled tools are `read`, `edit`, `write`, `grep`, `find`, `ls`, `codemode`, and `tool_search`. Bash is excluded in the SDK, including when another component requests tool activation. PowerShell is upstream's Windows shell tool and is not provisioned on this Linux VM. There is no browser terminal. Workspace extensions and executable provider configuration are not automatically loaded. Deployment code/model configuration is root-owned and read-only to the service; only workspace, session state and temporary files are writable.
+
+The VM installs Node 24.19.0 and a checksum-verified, commit-pinned release of [pi-web-sandbox](https://github.com/mitschwimmer/pi-web-sandbox). That repository owns the frontend source fork, Pi dependency lockfile, headless service, tool policy, integration tests, and release pipeline. The homelab owns the VM, systemd unit, proxy/authentication policy, and model endpoint settings. Update `local.pi_service_release` and `local.pi_service_sha256` together from a verified release when upgrading. No frontend source patch runs during installation. The frontend is a remote control surface for the shared session; its session switch endpoint is a no-op, while tree navigation and branching work within the conversation.
+
+Configure and enable the llama.cpp router first, with at least 32768 context tokens per slot for each named preset in `llama/models.ini.tftpl`. Pi uses its private `/v1` endpoint and preset names as model IDs, with a placeholder key; no provider secret is required. Its context metadata follows each preset's context per slot, output is limited to 8192 tokens, and thinking effort uses the model's server setting. Pi and Open WebUI share the backend, so requests for different models may cause GPU model swaps. Point `pi.<base_domain>` at Caddy, then add this to ignored `site.auto.tfvars`:
+
+```hcl
+pi = {
+  host_number = 15
+  # Optional defaults:
+  # cpu       = 2
+  # memory    = "2GiB"
+  # root_size = "16GiB"
+  # hostname  = "pi.mitschwimmer.de"
+}
+```
+
+Choose a host number distinct from the other workloads. The hostname must be beneath `site.base_domain` so Authelia's session cookie applies; Open WebUI's OIDC hostname may still be on another domain. Caddy protects the entire Pi frontend, including API and WebSocket requests, through Authelia's `ai-users` two-factor ForwardAuth rule. As with the other workloads, use Caddy for public access; Pi's upstream HTTP port is reachable from the shared internal bridge and has no independent login.
+
+Run the wrapper's `tofu validate`, `tofu plan` and `tofu apply`. The plan adds the VM and two volumes, replaces Authelia to load its policy, and reloads Caddy. A push to GitHub only verifies the changes. Cloud-init installs Debian packages, the pinned Node runtime and npm packages on first boot. Incus agent readiness does not mean application installation has finished:
+
+```fish
+incus exec measerve:pi -- cloud-init status --wait
+incus exec measerve:pi -- systemctl status homelab-pi
+incus exec measerve:pi -- curl -fsS http://127.0.0.1:3001/api/health
+incus exec measerve:pi -- curl -fsS http://<llama-private-IP>:8080/v1/models
+```
+
+The model IDs in `/etc/homelab-pi/models.json` match the named router presets and `/v1/models`. Inspect `journalctl -u homelab-pi` and `/var/log/cloud-init-output.log` through `incus exec` if startup fails. Debian security updates are enabled; plan VM reboots for kernel updates. Runtime/code/model changes replace the VM because cloud-init only runs on first boot, retaining both volumes. Back up those volumes before upgrades as described in [recovery](docs/recovery.md).
+
+Open `https://pi.<base_domain>` from your browser. Verify that an `ai-users` account can chat and stream tool output, while an authenticated account outside that group is denied. Ask Pi to list, find, read, create and edit a file in `/workspace`, and verify that it cannot activate Bash or execute a shell command. Reconnect from another browser to confirm the shared session, then restart the service to confirm persistence. Administratively populate repositories with `incus file push` or `incus exec`; Pi itself cannot clone, build, test or commit through a shell.
+
+CI runs OpenTofu format/validation, mocked infrastructure plans, and the secret-wrapper tests. Frontend builds and runtime integration tests run in [pi-web-sandbox](https://github.com/mitschwimmer/pi-web-sandbox). See that repository for local service development and test instructions.
 
 ## Serve models with llama.cpp and ROCm
 

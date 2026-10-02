@@ -64,3 +64,10 @@ site = {
 # KeePass secrets, and point this hostname's public DNS at Caddy (see README).
 # The host number must differ from llama and all private_host_numbers above.
 # openwebui = { hostname = "ai.archaic.work", host_number = 14 }
+
+# Optional shared Pi in its own Debian VM. Public DNS for pi.<base_domain>
+# must point at Caddy. Same bridge and internet access as the other workloads.
+# Authelia users need ai-users; admins alone no longer grants AI access.
+# pi = { host_number = 15 }
+# Defaults: 2 CPUs, 2GiB RAM, 16GiB root disk. Optional hostname must be a
+# distinct subdomain of base_domain for the ForwardAuth cookie to apply.

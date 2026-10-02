@@ -94,6 +94,27 @@ variable "openwebui" {
   }
 }
 
+variable "pi" {
+  description = "Optional shared Pi web frontend in a Debian VM. Uses the existing bridge, internet access and llama.cpp backend."
+  type = object({
+    host_number = number
+    hostname    = optional(string)
+    cpu         = optional(number, 2)
+    memory      = optional(string, "2GiB")
+    root_size   = optional(string, "16GiB")
+  })
+  default = null
+
+  validation {
+    condition = var.pi == null ? true : (
+      var.pi.host_number > 1 && var.pi.host_number == floor(var.pi.host_number) &&
+      var.pi.cpu >= 1 && var.pi.cpu == floor(var.pi.cpu) &&
+      (var.pi.hostname == null ? true : can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.pi.hostname)))
+    )
+    error_message = "Pi needs a whole host number greater than 1, a positive whole CPU count and, if supplied, a lowercase DNS hostname."
+  }
+}
+
 variable "prometheus_extra_targets" {
   description = "Additional private HTTP Prometheus exporters, for example the Immich API and microservices endpoints once deployed."
   type = list(object({

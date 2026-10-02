@@ -8,6 +8,8 @@ locals {
     base_domain        = var.site.base_domain
     openwebui_enabled  = var.openwebui != null
     openwebui_hostname = var.openwebui == null ? "" : var.openwebui.hostname
+    pi_enabled         = var.pi != null
+    pi_hostname        = local.pi_hostname
   })
 }
 

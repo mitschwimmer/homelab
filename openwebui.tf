@@ -82,7 +82,7 @@ resource "incus_instance" "openwebui" {
     "environment.OAUTH_TOKEN_ENDPOINT_AUTH_METHOD" = "client_secret_basic"
     "environment.ENABLE_OAUTH_ROLE_MANAGEMENT"     = "true"
     "environment.OAUTH_ROLES_CLAIM"                = "groups"
-    "environment.OAUTH_ALLOWED_ROLES"              = "admins"
+    "environment.OAUTH_ALLOWED_ROLES"              = "ai-users"
     "environment.OAUTH_ADMIN_ROLES"                = "admins"
     "environment.OAUTH_MERGE_ACCOUNTS_BY_EMAIL"    = "false"
     "environment.ENABLE_PERSISTENT_CONFIG"         = "false"

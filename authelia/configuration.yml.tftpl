@@ -17,6 +17,11 @@ access_control:
     - domain: grafana.${base_domain}
       subject: 'group:admins'
       policy: two_factor
+%{ if pi_enabled ~}
+    - domain: ${pi_hostname}
+      subject: 'group:ai-users'
+      policy: two_factor
+%{ endif ~}
 
 session:
   cookies:
@@ -47,6 +52,13 @@ identity_providers:
         rules:
           - subject: 'group:admins'
             policy: two_factor
+%{ if openwebui_enabled ~}
+      ai_users:
+        default_policy: deny
+        rules:
+          - subject: 'group:ai-users'
+            policy: two_factor
+%{ endif ~}
     # Grafana reads the username, email, and group for its local admin role
     # from the ID token, so include these claims there explicitly.
     claims_policies:
@@ -84,8 +96,7 @@ identity_providers:
         client_name: Open WebUI
         client_secret: '{{ secret "/var/lib/homelab-secrets/openwebui_client_secret_hash" }}'
         public: false
-        # Reuse the admins-only, two-factor policy above.
-        authorization_policy: grafana_admins
+        authorization_policy: ai_users
         claims_policy: openwebui
         require_pkce: true
         pkce_challenge_method: S256
