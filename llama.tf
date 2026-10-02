@@ -1,5 +1,5 @@
-# Model binaries are uploaded directly to this volume, never stored in state.
-# Create it with llama.enabled=false, upload the model, then enable the instance.
+# Retain the existing volume for manually uploaded models, including legacy
+# single-model installations. Downloads use a separate UID-1000 cache volume.
 resource "incus_storage_volume" "llama_models" {
   count  = var.llama == null ? 0 : 1
   name   = "llama-models"
@@ -18,6 +18,53 @@ resource "incus_storage_volume" "llama_models" {
   }
 }
 
+resource "incus_storage_volume" "llama_cache" {
+  count  = var.llama == null ? 0 : 1
+  name   = "llama-cache"
+  pool   = var.llama.storage_pool
+  remote = var.site.incus_remote
+  config = {
+    "initial.uid"  = "1000"
+    "initial.gid"  = "1000"
+    "initial.mode" = "0750"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+locals {
+  llama_presets = var.llama == null ? "" : templatefile("${path.module}/llama/models.ini.tftpl", {
+    model_file       = var.llama.model_file
+    context_size     = var.llama.context_size
+    parallel         = var.llama.parallel
+    speculative_type = var.llama.speculative_type
+    draft_max        = var.llama.draft_max
+    reasoning_effort = var.llama.reasoning_effort
+  })
+  llama_model_names = concat(["mimo", "qwen36"], var.llama == null ? [] : (
+    var.llama.model_file == null ? [] : ["local"]
+  ))
+}
+
+resource "incus_storage_volume" "llama_config" {
+  count  = var.llama == null ? 0 : 1
+  name   = "llama-config"
+  pool   = var.site.storage_pool
+  remote = var.site.incus_remote
+  file {
+    target_path = "/models.ini"
+    content     = local.llama_presets
+    mode        = "0644"
+  }
+}
+
+resource "terraform_data" "llama_configuration" {
+  count            = var.llama == null ? 0 : 1
+  triggers_replace = sha256(local.llama_presets)
+}
+
 resource "incus_instance" "llama" {
   count    = var.llama == null ? 0 : (var.llama.enabled ? 1 : 0)
   name     = "llama"
@@ -30,18 +77,18 @@ resource "incus_instance" "llama" {
     "boot.autorestart"                       = "true"
     "oci.uid"                                = "1000"
     "oci.gid"                                = "1000"
-    "environment.LLAMA_ARG_MODEL"            = "/models/${var.llama.model_file}"
+    "environment.LLAMA_CACHE"                = "/var/cache/llama"
+    "environment.LLAMA_ARG_MODELS_PRESET"    = "/etc/llama/models.ini"
+    "environment.LLAMA_ARG_MODELS_MAX"       = "1"
+    "environment.LLAMA_ARG_MODELS_AUTOLOAD"  = "true"
+    "environment.LLAMA_ARG_HOST"             = "0.0.0.0"
     "environment.LLAMA_ARG_PORT"             = "8080"
-    "environment.LLAMA_ARG_CTX_SIZE"         = tostring(var.llama.context_size)
-    "environment.LLAMA_ARG_N_GPU_LAYERS"     = "all"
-    "environment.LLAMA_ARG_N_PARALLEL"       = tostring(var.llama.parallel)
-    "environment.LLAMA_ARG_SPEC_TYPE"        = var.llama.speculative_type
-    "environment.LLAMA_ARG_SPEC_DRAFT_N_MAX" = tostring(var.llama.draft_max)
-    "environment.LLAMA_ARG_CHAT_TEMPLATE_KWARGS" = jsonencode({
-      reasoning_effort = var.llama.reasoning_effort
-    })
     "environment.LLAMA_ARG_ENDPOINT_METRICS" = "1"
     "environment.LLAMA_ARG_UI"               = "false"
+  }
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.llama_configuration]
   }
 
   device {
@@ -69,6 +116,27 @@ resource "incus_instance" "llama" {
       path     = "/models"
       pool     = var.llama.storage_pool
       source   = incus_storage_volume.llama_models[0].name
+      readonly = "true"
+    }
+  }
+
+  device {
+    name = "cache"
+    type = "disk"
+    properties = {
+      path   = "/var/cache/llama"
+      pool   = var.llama.storage_pool
+      source = incus_storage_volume.llama_cache[0].name
+    }
+  }
+
+  device {
+    name = "config"
+    type = "disk"
+    properties = {
+      path     = "/etc/llama"
+      pool     = var.site.storage_pool
+      source   = incus_storage_volume.llama_config[0].name
       readonly = "true"
     }
   }

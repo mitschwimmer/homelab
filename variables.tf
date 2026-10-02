@@ -56,13 +56,13 @@ variable "incus_metrics" {
 }
 
 variable "llama" {
-  description = "Optional ROCm llama.cpp server. Set enabled=false to create and populate the model volume before starting the instance."
+  description = "Optional ROCm llama.cpp model router with automatic downloads. model_file and its tuning fields optionally retain an existing uploaded GGUF as the local preset."
   type = object({
     enabled          = bool
     host_number      = number
     storage_pool     = string
     gpu_pci          = string
-    model_file       = string
+    model_file       = optional(string)
     context_size     = optional(number, 49152)
     parallel         = optional(number, 1)
     speculative_type = optional(string, "draft-mtp")
@@ -76,7 +76,7 @@ variable "llama" {
       var.llama.host_number > 1 &&
       var.llama.host_number == floor(var.llama.host_number) &&
       can(regex("^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$", var.llama.gpu_pci)) &&
-      can(regex("^[^/]+\\.gguf$", var.llama.model_file)) &&
+      (var.llama.model_file == null ? true : can(regex("^[^/\\\\\\r\\n]+\\.gguf$", var.llama.model_file))) &&
       var.llama.context_size >= 512 && var.llama.context_size == floor(var.llama.context_size) &&
       var.llama.parallel >= 1 && var.llama.parallel == floor(var.llama.parallel) &&
       contains(["none", "draft-mtp"], var.llama.speculative_type) &&

@@ -184,11 +184,15 @@ incus exec measerve:openwebui -- curl -fsS http://<llama-private-IP>:8080/v1/mod
 
 Replace the placeholders with your configured domain and the llama address from `python3 scripts/homelab.py tofu output private_addresses`. Open `https://ai.archaic.work`, complete Authelia login with an `admins` account and a second factor, and send a chat message. Verify a non-admin account cannot authorize the client and that no password signup/login path is usable. Test streaming and reload the page to confirm chat persistence. For failures, inspect `incus console measerve:openwebui --show-log` and the Authelia/Caddy logs. Back up `openwebui-data` before image upgrades; it contains personal conversations and uploads, and database migrations may affect downgrade compatibility. The volume has destruction protection and survives instance replacement.
 
-## Serve a GGUF with llama.cpp and ROCm
+## Serve models with llama.cpp and ROCm
 
-This optional workload runs the pinned upstream `server-rocm` OCI image as UID/GID 1000. It receives one GPU's DRM render node through an Incus `gpu` device and `/dev/kfd` through a `unix-char` device. The API listens on port 8080 at its **private bridge address only**; there is no public Caddy route. Other workloads on that bridge can reach it. Prometheus scrapes `/metrics` when it is enabled. The models live in a separate `llama-models` volume and do not enter OpenTofu state.
+The optional llama.cpp workload runs the pinned `server-rocm-b11277` image as UID/GID 1000. It receives the selected GPU's DRM render node and `/dev/kfd`. The API listens on port 8080 on the private bridge, with no public Caddy route. Open WebUI keeps using the same `/v1` endpoint.
 
-First check the actual GPU and an available pool on measerve. If the IncusOS GPU firmware application is missing, install it and verify that Incus then detects the card. Its firmware does not replace the host kernel driver. In fish:
+The server runs in **router mode**. Requests select `mimo`, `qwen36`, or an optional `local` preset using the OpenAI API's `model` field. At most one model is loaded at a time. Requesting another model unloads the previous one and starts the requested model with its own settings. Model switching takes loading time; the first load also downloads the weights. Concurrent requests for different models share this single residency slot and can incur queueing and repeated switches.
+
+### Configure and apply
+
+Check the GPU and an available storage pool on measerve. If the IncusOS GPU firmware application is missing, install it and verify that Incus detects the card. Run the `add` command only if `gpu-support` is absent:
 
 ```fish
 incus admin os application list measerve:
@@ -197,72 +201,104 @@ incus info measerve: --resources
 incus storage list measerve:
 ```
 
-Run the `add` command only if `gpu-support` is absent from the application list. Before enabling the llama instance, confirm the AMD card reports the `amdgpu` driver and a DRM render node in `incus info --resources`; a PCI entry alone is insufficient for ROCm. If those are still missing after installing the firmware, inspect the IncusOS kernel logs before applying the workload.
-
-Add `llama` to your ignored `site.auto.tfvars`, replacing the placeholders with values from measerve. Choose an existing pool with enough room for models; `site.storage_pool` still holds the instance root disk. Set `enabled = false` initially. The host number must differ from Authelia, Prometheus, and Grafana:
+Confirm the AMD card reports the `amdgpu` driver and a DRM render node. Firmware does not replace the host kernel driver. Add the following to your ignored `site.auto.tfvars`, using an existing pool and the actual full PCI address. The host number must differ from the other workloads:
 
 ```hcl
 llama = {
-  enabled      = false
+  enabled      = true
   host_number  = 13
   storage_pool = "<existing-pool>"
   gpu_pci      = "<full-GPU-PCI-address>"
-  model_file   = "my-model.Q4_K_M.gguf"
-  context_size = 49152
-  parallel     = 1
-  speculative_type = "draft-mtp"
-  draft_max        = 2
-  reasoning_effort = "medium"
 }
 ```
 
-These tuning values are also the defaults when omitted. `draft-mtp` requires a GGUF containing a compatible MTP head; use `speculative_type = "none"` for other models. `reasoning_effort` is passed to the model's chat template and requires a template that honors it. Qwen3.8 supports `low`, `medium`, and `xhigh`; `medium` keeps thinking enabled without the extra xhigh instruction. Clients can override the server default per request.
-
-Then create only the model volume:
-
-```fish
-python3 scripts/homelab.py tofu plan
-python3 scripts/homelab.py tofu apply
-```
-
-The first plan should add `llama-models`, with no `llama` instance. Download the desired GGUF using the Nix shell's Hugging Face CLI. Replace the repository ID, filename, and local directory with your chosen values; specify the filename to avoid downloading the entire model repository:
-
-```fish
-hf download <owner/model-repository> my-model.Q4_K_M.gguf --local-dir /path/to/models
-```
-
-For a private or gated repository, first run `hf auth login` and ensure your account has access to the model. See the [Hugging Face CLI documentation](https://huggingface.co/docs/huggingface_hub/en/guides/cli). Verify the file's published SHA-256 checksum, then push it directly into the volume. Replace the local path, pool, and filename with your chosen values:
-
-```fish
-incus storage volume file push /path/to/my-model.Q4_K_M.gguf measerve:local llama-models/my-model.Q4_K_M.gguf --uid 0 --gid 0 --mode 0644
-```
-
-Set `enabled = true`, then plan and apply again. The plan should create the `llama` instance and update Prometheus's scrape configuration. The ROCm image is pinned to a build tag in `llama.tf`; change it deliberately after testing an upgrade. The server uses the selected GGUF, the configured context size, and `--n-gpu-layers all`. A model larger than available VRAM may fail to load; select a fitting quantization or adjust the offload setting in `llama.tf`.
+A fresh installation needs no manual model upload. Plan and apply from the repository's Nix shell:
 
 ```fish
 python3 scripts/homelab.py tofu plan
 python3 scripts/homelab.py tofu apply
 incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/health
-incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/metrics
-incus console measerve:llama --show-log
+incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/v1/models
 ```
 
-Confirm in the server log that the HIP backend found the intended GPU and that model layers were offloaded. A healthy `/health` response alone does not establish GPU use. In Grafana Explore, `up{job="llama"}` should become `1` after the scrape. The server has no API key because it has no published route; add authentication and an intentional access path before exposing it to clients outside the private bridge. Back up `llama-models` if retaining downloaded models matters. OpenTofu prevents accidental destruction of that volume; changing its pool requires a deliberate volume migration.
+Review the plan: it creates `llama-cache` and `llama-config` and may replace the llama and Prometheus instances. Changes to presets replace the llama instance so it reads the new configuration. There is no deployment on push.
 
-### Apply the measured Qwen3.8 tuning
+The volumes have distinct roles:
 
-The image is pinned to `server-rocm-b11277`, verified against the upstream ROCm image manifest on 2026-09-30. The published ROCm image follows a daily build schedule and can lag the latest binary nightly. The benchmarks below used the previous b10362 image; re-run them after upgrading. Port 8080 is explicit to keep the Open WebUI and Prometheus endpoints stable. Review the image-change plan for an instance replacement; the separate, protected `llama-models` volume retains the GGUF.
+| Volume | Mount | Purpose |
+| --- | --- | --- |
+| `llama-cache` | `/var/cache/llama`, writable UID/GID 1000 | Persistent Hugging Face downloads (`LLAMA_CACHE`) |
+| `llama-config` | `/etc/llama`, read-only | Rendered model presets |
+| `llama-models` | `/models`, read-only | Existing manually uploaded GGUFs |
 
-On the RX 9060 XT 16 GB with `Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller.gguf` and ROCm build b10362, the short-prompt, greedy 256-token completion test measured approximately 16.4 tokens/s without MTP, 24.2 with one draft token, 28.6 with two, and 27.2 with three. Reducing context from about 50k to 8k or slots from four to one did not materially change non-MTP speed. The MTP measurements used 8k context and one slot. The configured default is now 48 Ki tokens (49152) for longer conversations; this context with MTP has not yet been measured. Check startup allocations and health, then validate representative chat and coding requests. The earlier approximately 50k/four-slot configuration was close to VRAM capacity even without MTP.
+Both model volumes have destruction protection and survive instance replacement. Cached weights do not enter OpenTofu state. Keep enough space for the two new GGUFs (approximately 21 GB total), any existing models, download temporary files, and future updates. Back up weights if avoiding a re-download matters. Changing the model pool requires a deliberate volume migration.
 
-When updating an existing installation, set `context_size = 49152` in your ignored `site.auto.tfvars` (or remove that field to use the default). Keep your actual model filename, PCI address, pool and host number. An existing explicit context value overrides the default. The other tuning fields above can be omitted to use the defaults. Then run the wrapper's `tofu plan` and `tofu apply` commands; the configuration persists the settings previously changed with `incus config set`.
+### Model presets
 
-After applying, restart the application to load the new environment and wait for `/health` to succeed:
+Edit [`llama/models.ini.tftpl`](llama/models.ini.tftpl) to adjust model settings. Shared defaults use one slot, full GPU offload, Flash Attention, Q8 KV cache, Jinja, no vision projector, and no speculative decoding. These are text-only coding-agent presets:
+
+| API model | Distributor and quant | Initial context | Speculation |
+| --- | --- | --- | --- |
+| `mimo` | `bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF`, `Q5_K_M` | 131072 tokens | None |
+| `qwen36` | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`, `UD-IQ3_XXS` | 65536 tokens | None initially |
+| `local` (optional) | Existing `llama.model_file` | Existing `llama.context_size` | Existing `llama.speculative_type` |
+
+The first two presets specify the exact `hf-file`; llama.cpp downloads only the selected text model, not the entire repository or its vision projector. Downloads require internet access to Hugging Face and its file storage endpoints. These public repositories need no token. A first request can take several minutes to download. The cache persists across replacements, but upstream repository contents can change: filenames are explicit, not immutable revision pins.
+
+Context sizes are **trial targets**, not measured VRAM-fit guarantees on the RX 9060 XT. Check startup allocations and that all layers are on the intended GPU. If a load fails for lack of VRAM, reduce that preset's `ctx-size`, plan/apply, and repeat. Do not assume `/health` success establishes that any model has loaded or uses the GPU.
+
+Keep each GGUF's embedded template. Unsloth documents Qwen3.6 improvements for developer messages and nested tool arguments; validate actual multi-turn tool calls before accepting the template. MiMo uses its own chat template despite its Qwen architecture. If a template override becomes necessary, mount the reviewed file in `llama-config` and add `chat-template-file = /etc/llama/<filename>` to that model's preset.
+
+Qwen3.6's default coding sampler is temperature 0.6, top-p 0.95, top-k 20, min-p 0; requests can override sampling parameters. Both new presets explicitly enable thinking rather than inheriting Qwen3.8's `reasoning_effort`. Validate thinking extraction and tool calls with the actual agent. After validating Qwen3.6's baseline and available VRAM, uncomment its `spec-type = draft-mtp` and `spec-draft-n-max = 2` settings, apply, and compare speed and correctness. Do not enable MTP globally or assume MiMo's GGUF contains a usable MTP head.
+
+Model-specific settings belong in the INI, not global `LLAMA_ARG_CTX_SIZE`, `LLAMA_ARG_SPEC_TYPE`, or `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` environment variables. Router CLI/environment settings can override presets.
+
+### Warm up and switch models
+
+Load each preset once to download and validate it. Run these commands **sequentially**; the second load replaces the first:
 
 ```fish
-incus restart measerve:llama
-incus exec measerve:llama -- curl -fsS http://127.0.0.1:8080/health
+incus exec measerve:llama -- curl -fsS --max-time 3600 \
+  http://127.0.0.1:8080/models/load \
+  -H 'Content-Type: application/json' -d '{"model":"mimo"}'
+incus exec measerve:llama -- curl -fsS --max-time 3600 \
+  http://127.0.0.1:8080/models/load \
+  -H 'Content-Type: application/json' -d '{"model":"qwen36"}'
 incus console measerve:llama --show-log
 ```
 
-Check that the startup log shows one slot, a 49152-token context, and MTP initialization. Review the memory-fit estimate and GPU buffer allocations; successful layer offload alone does not establish enough VRAM headroom. For medium effort, Qwen3.8's example chat template should no longer include the xhigh reasoning instruction. Effort changes affect templated chat requests (including Open WebUI); the raw `/completion` speed test does not exercise the chat template or reasoning effort.
+`/models` reports load state and failures. Confirm `loaded` and test an actual completion; do not rely only on the load acknowledgement. To select a model through the API:
+
+```fish
+incus exec measerve:openwebui -- curl -fsS --max-time 3600 \
+  http://<llama-private-IP>:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"mimo","messages":[{"role":"user","content":"Explain a small Java record example."}],"max_tokens":2048}'
+```
+
+Use `qwen36` to switch, or `local` for your previous model. Open WebUI should list these names after refreshing its model list. Existing chats referring to an old filename/alias need the corresponding new selection. For agents, set their model ID to the preset name and their advertised context limit to the tested server context.
+
+### Existing installations
+
+Keep your existing `llama` block, including its `model_file` and tuning fields, if you want the current GGUF to remain available as `local`. Those fields now apply only to that preset; they do not override MiMo/Qwen3.6. The local preset retains F16 KV cache and the previous context/MTP/reasoning defaults. Remove `model_file` and the old tuning fields when you no longer want that preset. The uploaded file is retained on `llama-models`.
+
+No cache-directory chown or re-upload of your existing file is necessary: the new download volume is created with the correct UID/GID. Inspect manually applied instance settings before deploying; remove any obsolete global model/context/speculation/template environment settings that remain outside OpenTofu's managed configuration.
+
+The historical Qwen3.8 short-prompt benchmark on b10362 measured about 16.4 tokens/s without MTP and 28.6 with two draft tokens at 8k context. It does not establish performance for these new models or their larger contexts. Compare prompt processing, time to first tool call, and time to a correct tested change on representative coding tasks.
+
+### Monitoring and validation
+
+Prometheus scrapes each preset with `model=<name>&autoload=false`, retaining `job="llama"` and adding a `model` label. Monitoring therefore never downloads or loads an idle model. An unloaded model's scrape can fail (`up=0`); that alone is not a service outage. Use the router's `/health` for service health and `/models` for residency. Model inference metrics are available only while that model is loaded.
+
+The router remains private and has no API key; it is for trusted bridge services. Do not expose its model management endpoints through Caddy. The b11277 source supports presets, automatic downloading, and one-model residency. The CPU binary can validate router startup and presets locally; ROCm memory fit, MTP performance, embedded template behavior, and Open WebUI switching still require validation on measerve.
+
+Run the configuration checks without accessing a live Incus host:
+
+```fish
+tofu fmt -check -recursive
+tofu init -backend=false
+tofu validate
+tofu test
+```
+
+The mocked tests cover optional installations, writable cache permissions, model-specific settings, non-loading monitoring, legacy-model migration, and rejection of multiline filenames in presets.
