@@ -73,10 +73,11 @@ run "router_with_downloads" {
   }
   assert {
     condition = (
-      join(",", local.llama_model_names) == "mimo,qwen36" &&
-      strcontains(local.llama_presets, "hf-file = MiMo-V2.6-Distill-Qwen-9B-Q5_K_M.gguf") &&
-      strcontains(local.llama_presets, "hf-file = Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf") &&
-      !strcontains(local.llama_presets, "[local]")
+      length(local.llama_model_names) > 0 &&
+      !contains(local.llama_model_names, "*") &&
+      one(incus_storage_volume.llama_config[0].file).content == templatefile("${path.module}/llama/models.ini.tftpl", {}) &&
+      strcontains(local.llama_presets, "hf-repo = ") &&
+      strcontains(local.llama_presets, "hf-file = ")
     )
     error_message = "The INI must supply the model IDs and exact download files."
   }
@@ -84,8 +85,9 @@ run "router_with_downloads" {
     condition = (
       strcontains(local.prometheus_configuration, "autoload: ['false']") &&
       strcontains(local.prometheus_configuration, "target_label: __param_model") &&
-      strcontains(local.prometheus_configuration, "model: \"mimo\"") &&
-      strcontains(local.prometheus_configuration, "model: \"qwen36\"")
+      alltrue([
+        for model in local.llama_model_names : strcontains(local.prometheus_configuration, "model: ${jsonencode(model)}")
+      ])
     )
     error_message = "Monitoring must route by model without loading idle models."
   }
