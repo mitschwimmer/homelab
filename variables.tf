@@ -56,18 +56,12 @@ variable "incus_metrics" {
 }
 
 variable "llama" {
-  description = "Optional ROCm llama.cpp server. Set enabled=false to create and populate the model volume before starting the instance."
+  description = "Optional ROCm llama.cpp model router. Models, downloads and tuning are configured only in llama/models.ini.tftpl."
   type = object({
-    enabled          = bool
-    host_number      = number
-    storage_pool     = string
-    gpu_pci          = string
-    model_file       = string
-    context_size     = optional(number, 49152)
-    parallel         = optional(number, 1)
-    speculative_type = optional(string, "draft-mtp")
-    draft_max        = optional(number, 2)
-    reasoning_effort = optional(string, "medium")
+    enabled      = bool
+    host_number  = number
+    storage_pool = string
+    gpu_pci      = string
   })
   default = null
 
@@ -76,15 +70,9 @@ variable "llama" {
       var.llama.host_number > 1 &&
       var.llama.host_number == floor(var.llama.host_number) &&
       can(regex("^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7]$", var.llama.gpu_pci)) &&
-      can(regex("^[^/]+\\.gguf$", var.llama.model_file)) &&
-      var.llama.context_size >= 512 && var.llama.context_size == floor(var.llama.context_size) &&
-      var.llama.parallel >= 1 && var.llama.parallel == floor(var.llama.parallel) &&
-      contains(["none", "draft-mtp"], var.llama.speculative_type) &&
-      var.llama.draft_max >= 1 && var.llama.draft_max == floor(var.llama.draft_max) &&
-      contains(["low", "medium", "xhigh"], var.llama.reasoning_effort) &&
       trimspace(var.llama.storage_pool) != ""
     )
-    error_message = "Set a whole host number greater than 1, an existing storage pool, a full GPU PCI address, a GGUF filename, context size of at least 512, positive whole parallel/draft counts, speculative_type none or draft-mtp, and reasoning_effort low, medium or xhigh."
+    error_message = "Set a whole host number greater than 1, an existing storage pool, and a full GPU PCI address."
   }
 }
 

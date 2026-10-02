@@ -31,6 +31,23 @@ scrape_configs:
       key_file: /var/lib/homelab-secrets/incus_metrics_key
       server_name: ${jsonencode(incus_metrics_server_name)}
 %{ endif ~}
+%{ if llama_enabled ~}
+
+  - job_name: llama
+    metrics_path: /metrics
+    # Observe the active model; never load/switch models just to scrape them.
+    params:
+      autoload: ['false']
+    static_configs:
+%{ for model in llama_models ~}
+      - targets: ['${llama_ip}:8080']
+        labels:
+          model: ${jsonencode(model)}
+%{ endfor ~}
+    relabel_configs:
+      - source_labels: [model]
+        target_label: __param_model
+%{ endif ~}
 %{ for target in extra_targets ~}
 
   - job_name: ${jsonencode(target.job_name)}
