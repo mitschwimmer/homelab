@@ -35,16 +35,3 @@ min-p = 0.0
 ; Baseline first. After validating tool calls and VRAM headroom, enable:
 ; spec-type = draft-mtp
 ; spec-draft-n-max = 2
-
-%{ if model_file != null ~}
-; Preserve an explicitly configured local GGUF and its previous tuning.
-[local]
-model = /models/${model_file}
-ctx-size = ${context_size}
-parallel = ${parallel}
-cache-type-k = f16
-cache-type-v = f16
-spec-type = ${speculative_type}
-spec-draft-n-max = ${draft_max}
-chat-template-kwargs = ${jsonencode({ reasoning_effort = reasoning_effort })}
-%{ endif ~}

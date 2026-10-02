@@ -67,9 +67,9 @@ run "router_with_downloads" {
       incus_storage_volume.llama_cache[0].pool == "models" &&
       one([for d in incus_instance.llama[0].device : d if d.name == "cache"]).properties["path"] == incus_instance.llama[0].config["environment.LLAMA_CACHE"] &&
       !contains(keys(one([for d in incus_instance.llama[0].device : d if d.name == "cache"]).properties), "readonly") &&
-      one([for d in incus_instance.llama[0].device : d if d.name == "models"]).properties["readonly"] == "true"
+      !contains([for d in incus_instance.llama[0].device : d.name], "models")
     )
-    error_message = "Downloads need a writable UID-1000 persistent cache while uploaded models stay read-only."
+    error_message = "Downloads need a writable UID-1000 persistent cache without an uploaded-model mount."
   }
   assert {
     condition = (
@@ -78,7 +78,7 @@ run "router_with_downloads" {
       strcontains(local.llama_presets, "hf-file = Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf") &&
       !strcontains(local.llama_presets, "[local]")
     )
-    error_message = "Fresh installations must select exact download files without a legacy preset."
+    error_message = "The INI must supply the model IDs and exact download files."
   }
   assert {
     condition = (
@@ -89,45 +89,4 @@ run "router_with_downloads" {
     )
     error_message = "Monitoring must route by model without loading idle models."
   }
-}
-
-run "retain_existing_local_model" {
-  command = plan
-  variables {
-    llama = {
-      enabled          = true
-      host_number      = 13
-      storage_pool     = "models"
-      gpu_pci          = "0000:03:00.0"
-      model_file       = "Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller.gguf"
-      context_size     = 49152
-      speculative_type = "draft-mtp"
-      draft_max        = 2
-      reasoning_effort = "medium"
-    }
-  }
-  assert {
-    condition = (
-      contains(local.llama_model_names, "local") &&
-      strcontains(local.llama_presets, "model = /models/Qwen3.8-27B-i1-IQ4_XS-GGUF-Smaller.gguf") &&
-      strcontains(local.llama_presets, "ctx-size = 49152") &&
-      strcontains(local.llama_presets, "spec-type = draft-mtp") &&
-      strcontains(local.llama_presets, "\"reasoning_effort\":\"medium\"")
-    )
-    error_message = "Existing tfvars must retain their local GGUF and tuning without becoming router-wide defaults."
-  }
-}
-
-run "reject_ini_injection" {
-  command = plan
-  variables {
-    llama = {
-      enabled      = true
-      host_number  = 13
-      storage_pool = "models"
-      gpu_pci      = "0000:03:00.0"
-      model_file   = "model.gguf\n[extra]\nmodel = other.gguf"
-    }
-  }
-  expect_failures = [var.llama]
 }

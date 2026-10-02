@@ -188,7 +188,7 @@ Replace the placeholders with your configured domain and the llama address from 
 
 The optional llama.cpp workload runs the pinned `server-rocm-b11277` image as UID/GID 1000. It receives the selected GPU's DRM render node and `/dev/kfd`. The API listens on port 8080 on the private bridge, with no public Caddy route. Open WebUI keeps using the same `/v1` endpoint.
 
-The server runs in **router mode**. Requests select `mimo`, `qwen36`, or an optional `local` preset using the OpenAI API's `model` field. At most one model is loaded at a time. Requesting another model unloads the previous one and starts the requested model with its own settings. Model switching takes loading time; the first load also downloads the weights. Concurrent requests for different models share this single residency slot and can incur queueing and repeated switches.
+The server runs in **router mode**. Requests select `mimo` or `qwen36` using the OpenAI API's `model` field. At most one model is loaded at a time. Requesting another model unloads the previous one and starts the requested model with its own settings. Model switching takes loading time; the first load also downloads the weights. Concurrent requests for different models share this single residency slot and can incur queueing and repeated switches.
 
 ### Configure and apply
 
@@ -229,27 +229,26 @@ The volumes have distinct roles:
 | --- | --- | --- |
 | `llama-cache` | `/var/cache/llama`, writable UID/GID 1000 | Persistent Hugging Face downloads (`LLAMA_CACHE`) |
 | `llama-config` | `/etc/llama`, read-only | Rendered model presets |
-| `llama-models` | `/models`, read-only | Existing manually uploaded GGUFs |
+| `llama-models` | Not mounted | Protected archive of previously uploaded GGUFs |
 
-Both model volumes have destruction protection and survive instance replacement. Cached weights do not enter OpenTofu state. Keep enough space for the two new GGUFs (approximately 21 GB total), any existing models, download temporary files, and future updates. Back up weights if avoiding a re-download matters. Changing the model pool requires a deliberate volume migration.
+The cache and archived model volumes have destruction protection and survive instance replacement. Cached weights do not enter OpenTofu state. Keep enough space for the two new GGUFs (approximately 21 GB total), any existing models, download temporary files, and future updates. Back up weights if avoiding a re-download matters. Changing the model pool requires a deliberate volume migration.
 
 ### Model presets
 
-Edit [`llama/models.ini.tftpl`](llama/models.ini.tftpl) to adjust model settings. Shared defaults use one slot, full GPU offload, Flash Attention, Q8 KV cache, Jinja, no vision projector, and no speculative decoding. These are text-only coding-agent presets:
+Manage models, download repositories/files, and all model settings only in [`llama/models.ini.tftpl`](llama/models.ini.tftpl). Add, rename, or remove named INI sections there; their names become API model IDs and Prometheus targets automatically. Plan and apply after editing. The `llama` tfvars object contains only infrastructure settings. Shared defaults use one slot, full GPU offload, Flash Attention, Q8 KV cache, Jinja, no vision projector, and no speculative decoding. These are text-only coding-agent presets:
 
 | API model | Distributor and quant | Initial context | Speculation |
 | --- | --- | --- | --- |
 | `mimo` | `bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF`, `Q5_K_M` | 131072 tokens | None |
 | `qwen36` | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`, `UD-IQ3_XXS` | 65536 tokens | None initially |
-| `local` (optional) | Existing `llama.model_file` | Existing `llama.context_size` | Existing `llama.speculative_type` |
 
-The first two presets specify the exact `hf-file`; llama.cpp downloads only the selected text model, not the entire repository or its vision projector. Downloads require internet access to Hugging Face and its file storage endpoints. These public repositories need no token. A first request can take several minutes to download. The cache persists across replacements, but upstream repository contents can change: filenames are explicit, not immutable revision pins.
+Both presets specify the exact `hf-file`; llama.cpp downloads only the selected text model, not the entire repository or its vision projector. Downloads require internet access to Hugging Face and its file storage endpoints. These public repositories need no token. A first request can take several minutes to download. The cache persists across replacements, but upstream repository contents can change: filenames are explicit, not immutable revision pins.
 
 Context sizes are **trial targets**, not measured VRAM-fit guarantees on the RX 9060 XT. Check startup allocations and that all layers are on the intended GPU. If a load fails for lack of VRAM, reduce that preset's `ctx-size`, plan/apply, and repeat. Do not assume `/health` success establishes that any model has loaded or uses the GPU.
 
 Keep each GGUF's embedded template. Unsloth documents Qwen3.6 improvements for developer messages and nested tool arguments; validate actual multi-turn tool calls before accepting the template. MiMo uses its own chat template despite its Qwen architecture. If a template override becomes necessary, mount the reviewed file in `llama-config` and add `chat-template-file = /etc/llama/<filename>` to that model's preset.
 
-Qwen3.6's default coding sampler is temperature 0.6, top-p 0.95, top-k 20, min-p 0; requests can override sampling parameters. Both new presets explicitly enable thinking rather than inheriting Qwen3.8's `reasoning_effort`. Validate thinking extraction and tool calls with the actual agent. After validating Qwen3.6's baseline and available VRAM, uncomment its `spec-type = draft-mtp` and `spec-draft-n-max = 2` settings, apply, and compare speed and correctness. Do not enable MTP globally or assume MiMo's GGUF contains a usable MTP head.
+Qwen3.6's default coding sampler is temperature 0.6, top-p 0.95, top-k 20, min-p 0; requests can override sampling parameters. Both presets explicitly enable thinking. Validate thinking extraction and tool calls with the actual agent. After validating Qwen3.6's baseline and available VRAM, uncomment its `spec-type = draft-mtp` and `spec-draft-n-max = 2` settings, apply, and compare speed and correctness. Do not enable MTP globally or assume MiMo's GGUF contains a usable MTP head.
 
 Model-specific settings belong in the INI, not global `LLAMA_ARG_CTX_SIZE`, `LLAMA_ARG_SPEC_TYPE`, or `LLAMA_ARG_CHAT_TEMPLATE_KWARGS` environment variables. Router CLI/environment settings can override presets.
 
@@ -276,13 +275,13 @@ incus exec measerve:openwebui -- curl -fsS --max-time 3600 \
   -d '{"model":"mimo","messages":[{"role":"user","content":"Explain a small Java record example."}],"max_tokens":2048}'
 ```
 
-Use `qwen36` to switch, or `local` for your previous model. Open WebUI should list these names after refreshing its model list. Existing chats referring to an old filename/alias need the corresponding new selection. For agents, set their model ID to the preset name and their advertised context limit to the tested server context.
+Use `qwen36` to switch. Open WebUI should list these names after refreshing its model list. Existing chats referring to an old filename/alias need the corresponding new selection. For agents, set their model ID to the preset name and their advertised context limit to the tested server context.
 
 ### Existing installations
 
-Keep your existing `llama` block, including its `model_file` and tuning fields, if you want the current GGUF to remain available as `local`. Those fields now apply only to that preset; they do not override MiMo/Qwen3.6. The local preset retains F16 KV cache and the previous context/MTP/reasoning defaults. Remove `model_file` and the old tuning fields when you no longer want that preset. The uploaded file is retained on `llama-models`.
+Reduce your existing `llama` tfvars block to `enabled`, `host_number`, `storage_pool`, and `gpu_pci`. Remove `model_file`, `context_size`, `parallel`, `speculative_type`, `draft_max`, and `reasoning_effort`; model configuration now lives solely in `llama/models.ini.tftpl`. The previous uploaded files remain protected on the unmounted `llama-models` volume, but there is no `local` preset.
 
-No cache-directory chown or re-upload of your existing file is necessary: the new download volume is created with the correct UID/GID. Inspect manually applied instance settings before deploying; remove any obsolete global model/context/speculation/template environment settings that remain outside OpenTofu's managed configuration.
+The download volume is created with the correct UID/GID. Inspect manually applied instance settings before deploying; remove any obsolete global model/context/speculation/template environment settings that remain outside OpenTofu's managed configuration.
 
 The historical Qwen3.8 short-prompt benchmark on b10362 measured about 16.4 tokens/s without MTP and 28.6 with two draft tokens at 8k context. It does not establish performance for these new models or their larger contexts. Compare prompt processing, time to first tool call, and time to a correct tested change on representative coding tasks.
 
@@ -301,4 +300,4 @@ tofu validate
 tofu test
 ```
 
-The mocked tests cover optional installations, writable cache permissions, model-specific settings, non-loading monitoring, legacy-model migration, and rejection of multiline filenames in presets.
+The mocked tests cover optional installations, writable cache permissions, model settings and IDs from the INI, removal of the uploaded-model mount, and non-loading monitoring.

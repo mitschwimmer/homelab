@@ -1,5 +1,5 @@
-# Retain the existing volume for manually uploaded models, including legacy
-# single-model installations. Downloads use a separate UID-1000 cache volume.
+# Keep the protected volume from previous single-model installations. It is
+# no longer mounted; all model downloads use the UID-1000 cache volume.
 resource "incus_storage_volume" "llama_models" {
   count  = var.llama == null ? 0 : 1
   name   = "llama-models"
@@ -35,17 +35,12 @@ resource "incus_storage_volume" "llama_cache" {
 }
 
 locals {
-  llama_presets = var.llama == null ? "" : templatefile("${path.module}/llama/models.ini.tftpl", {
-    model_file       = var.llama.model_file
-    context_size     = var.llama.context_size
-    parallel         = var.llama.parallel
-    speculative_type = var.llama.speculative_type
-    draft_max        = var.llama.draft_max
-    reasoning_effort = var.llama.reasoning_effort
-  })
-  llama_model_names = concat(["mimo", "qwen36"], var.llama == null ? [] : (
-    var.llama.model_file == null ? [] : ["local"]
-  ))
+  llama_presets = var.llama == null ? "" : templatefile("${path.module}/llama/models.ini.tftpl", {})
+  # Named INI sections are the API model IDs and monitoring targets.
+  llama_model_names = [
+    for section in regexall("(?m)^[\\t ]*\\[([^\\]\\r\\n]+)\\][\\t ]*(?:[;#].*)?\\r?$", local.llama_presets) : section[0]
+    if section[0] != "*"
+  ]
 }
 
 resource "incus_storage_volume" "llama_config" {
@@ -106,17 +101,6 @@ resource "incus_instance" "llama" {
     properties = {
       network        = var.site.private_bridge
       "ipv4.address" = local.private_ips.llama
-    }
-  }
-
-  device {
-    name = "models"
-    type = "disk"
-    properties = {
-      path     = "/models"
-      pool     = var.llama.storage_pool
-      source   = incus_storage_volume.llama_models[0].name
-      readonly = "true"
     }
   }
 

@@ -58,8 +58,7 @@ site = {
 #   storage_pool = "local"
 #   gpu_pci      = "<full-GPU-PCI-address>"
 # }
-# Existing model_file/context_size/MTP fields remain supported for a "local"
-# preset; leave them out for a fresh installation.
+# Define models, download files and all tuning only in llama/models.ini.tftpl.
 
 # Optional Open WebUI. First configure and enable llama, initialize the new
 # KeePass secrets, and point this hostname's public DNS at Caddy (see README).
